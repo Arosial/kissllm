@@ -1,8 +1,16 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from openai.types.completion import Completion
 
 from simplellm.observation.decorators import observe
 from simplellm.providers import get_provider_driver
 from simplellm.stream import CompletionStream
+from simplellm.tools import ToolMixin, ToolRegistry
+
+
+class CompletionResponse(ToolMixin):
+    def __init__(self, response: Completion):
+        self.__dict__.update(response.__dict__)
 
 
 class LLMClient:
@@ -54,18 +62,28 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: Optional[bool] = False,
+        tools: Optional[List[Dict[str, Any]]] | bool = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         **kwargs,
     ) -> Any:
         """Execute LLM completion with provider-specific implementation"""
         model = self.get_model(model)
+
+        # Use registered tools if tools parameter is True
+        if tools is True:
+            tools = ToolRegistry.get_tools_specs()
+
         res = self.provider_driver.completion(
             messages=messages,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=stream,
+            tools=tools,
+            tool_choice=tool_choice,
+            **kwargs,
         )
         if not stream:
-            return res
+            return CompletionResponse(res)
         else:
             return CompletionStream(res)

@@ -37,15 +37,29 @@ class GeneralOpenAIDriver(BaseDriver):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: Optional[bool] = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        **kwargs,
     ) -> Any:
         """Execute OpenAI chat completion"""
-        return self.client.chat.completions.create(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-        )
+        params = {
+            "messages": messages,
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+        }
+
+        # Add tools and tool_choice if provided
+        if tools:
+            params["tools"] = tools
+        if tool_choice:
+            params["tool_choice"] = tool_choice
+
+        # Add any additional parameters
+        params.update({k: v for k, v in kwargs.items() if v is not None})
+
+        return self.client.chat.completions.create(**params)
 
 
 providers.register_provider_driver(GeneralOpenAIDriver, as_default=True)

@@ -22,5 +22,8 @@ class BaseDriver(ABC):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: Optional[bool] = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        **kwargs,
     ) -> Any:
         """Execute LLM completion request"""
