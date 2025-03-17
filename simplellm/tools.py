@@ -1,11 +1,18 @@
+import json
+from contextlib import AsyncExitStack
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, get_type_hints
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 
 class ToolRegistry:
     """Registry for tool functions"""
 
     _tools: Dict[str, Dict[str, Any]] = {}
+    _mcp_servers: Dict[str, Dict[str, Any]] = {}
+    _mcp_tools: Dict[str, Dict[str, Any]] = {}
 
     @classmethod
     def register(cls, func=None, *, name=None, description=None):
@@ -71,9 +78,142 @@ class ToolRegistry:
         return decorator(func)
 
     @classmethod
+    def register_mcp_server(cls, server_path: str, server_name: str = None):
+        """Register an MCP server to make its tools available"""
+        server_id = server_name or server_path.split("/")[-1].split(".", 1)[0]
+        cls._mcp_servers[server_id] = {
+            "path": server_path,
+            "name": server_name or server_path,
+            "session": None,
+            "tools": [],
+        }
+        return server_id
+
+    @classmethod
+    async def connect_mcp_server(cls, server_id: str):
+        """Connect to an MCP server and register its tools"""
+        if server_id not in cls._mcp_servers:
+            raise ValueError(f"MCP server '{server_id}' not registered")
+
+        server_info = cls._mcp_servers[server_id]
+        server_path = server_info["path"]
+
+        # Validate server type and create parameters
+        is_python = server_path.endswith(".py")
+        is_js = server_path.endswith(".js")
+        if not (is_python or is_js):
+            raise ValueError("Server script must be a .py or .js file")
+
+        command = "python" if is_python else "node"
+        server_params = StdioServerParameters(
+            command=command, args=[server_path], env=None
+        )
+
+        # Create async exit stack for proper resource management
+        server_info["exit_stack"] = AsyncExitStack()
+        exit_stack = server_info["exit_stack"]
+
+        # Connect to server using stdio transport
+        stdio_transport = await exit_stack.enter_async_context(
+            stdio_client(server_params)
+        )
+        read_stream, write_stream = stdio_transport
+
+        # Initialize session with proper cleanup
+        session = await exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        server_info["session"] = session
+        await session.initialize()
+
+        # List available tools
+        response = await session.list_tools()
+        tools = response.tools
+
+        # Register each tool from the MCP server
+        for tool in tools:
+            tool_id = f"{server_id}_{tool.name}".replace(".", "_")
+            cls._mcp_tools[tool_id] = {
+                "server_id": server_id,
+                "name": tool.name,
+                "description": tool.description,
+                "spec": {
+                    "type": "function",
+                    "function": {
+                        "name": tool_id,
+                        "description": tool.description,
+                        "parameters": tool.inputSchema,
+                    },
+                },
+            }
+
+        # Store the tools in the server info
+        server_info["tools"] = tools
+        return [tool.name for tool in tools]
+
+    @classmethod
+    async def disconnect_mcp_server(cls, server_id: str):
+        """Disconnect from an MCP server"""
+        if server_id not in cls._mcp_servers:
+            return
+
+        server_info = cls._mcp_servers[server_id]
+        # Clean up resources using the exit stack
+        if "exit_stack" in server_info and server_info["exit_stack"]:
+            await server_info["exit_stack"].aclose()
+            server_info["exit_stack"] = None
+
+        # Remove all tools from this server
+        tool_ids_to_remove = []
+        for tool_id, tool_info in cls._mcp_tools.items():
+            if tool_info["server_id"] == server_id:
+                tool_ids_to_remove.append(tool_id)
+
+        for tool_id in tool_ids_to_remove:
+            del cls._mcp_tools[tool_id]
+
+    @classmethod
+    async def execute_mcp_tool_call(cls, tool_call: Dict[str, Any]) -> Any:
+        """Execute an MCP tool call"""
+        function_name = tool_call.get("function", {}).get("name")
+        function_args = tool_call.get("function", {}).get("arguments", "{}")
+
+        if function_name not in cls._mcp_tools:
+            raise ValueError(f"MCP tool '{function_name}' not found")
+
+        tool_info = cls._mcp_tools[function_name]
+        server_id = tool_info["server_id"]
+        tool_name = tool_info["name"]
+
+        server_info = cls._mcp_servers[server_id]
+        session = server_info["session"]
+
+        if not session:
+            # Try to reconnect
+            await cls.connect_mcp_server(server_id)
+            session = server_info["session"]
+            if not session:
+                raise ValueError(f"MCP server '{server_id}' not connected")
+
+        # Parse arguments (handle both string and dict formats)
+        if isinstance(function_args, str):
+            try:
+                args = json.loads(function_args)
+            except json.JSONDecodeError:
+                args = {}
+        else:
+            args = function_args
+
+        result = await session.call_tool(tool_name, args)
+        return result.content
+
+    @classmethod
     def get_tools_specs(cls) -> List[Dict[str, Any]]:
         """Get all registered tool specifications"""
-        return [tool["spec"] for tool in cls._tools.values()]
+        specs = [tool["spec"] for tool in cls._tools.values()]
+        # Add MCP tool specs
+        specs.extend([tool["spec"] for tool in cls._mcp_tools.values()])
+        return specs
 
     @classmethod
     def get_tool_function(cls, name: str) -> Optional[Callable]:
@@ -82,10 +222,14 @@ class ToolRegistry:
         return tool["function"] if tool else None
 
     @classmethod
-    def execute_tool_call(cls, tool_call: Dict[str, Any]) -> Any:
+    async def execute_tool_call(cls, tool_call: Dict[str, Any]) -> Any:
         """Execute a tool call with the given parameters"""
         function_name = tool_call.get("function", {}).get("name")
         function_args = tool_call.get("function", {}).get("arguments", "{}")
+
+        # Check if this is an MCP tool
+        if function_name in cls._mcp_tools:
+            return await cls.execute_mcp_tool_call(tool_call)
 
         # Parse arguments (handle both string and dict formats)
         if isinstance(function_args, str):
@@ -135,16 +279,15 @@ class ToolMixin:
                     ]
         return []
 
-    def get_tool_results(self) -> List[Dict[str, Any]]:
+    async def get_tool_results(self) -> List[Dict[str, Any]]:
         """Get results from executed tool calls"""
         if hasattr(self, "tool_results") and self.tool_results:
             return self.tool_results
 
-        # For non-streaming responses, execute tools on demand
         tool_results = []
         for tool_call in self.get_tool_calls():
             try:
-                result = ToolRegistry.execute_tool_call(tool_call)
+                result = await ToolRegistry.execute_tool_call(tool_call)
                 tool_results.append(
                     {
                         "tool_call_id": tool_call["id"],
@@ -167,9 +310,9 @@ class ToolMixin:
 
         return tool_results
 
-    def continue_with_tool_results(self, client, model=None):
+    async def continue_with_tool_results(self, client, model=None):
         """Continue the conversation with tool results"""
-        tool_results = self.get_tool_results()
+        tool_results = await self.get_tool_results()
         if not tool_results:
             return None
 

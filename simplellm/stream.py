@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 from openai.lib.streaming.chat import ChatCompletionStreamState
 from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 
-from simplellm.tools import ToolMixin, ToolRegistry
+from simplellm.tools import ToolMixin
 
 
 class AccumulatedCompletionResponse(ToolMixin):
@@ -67,26 +67,6 @@ class CompletionStream:
             yield c
 
         self._openai_state = state
-
-        # Execute tool calls if any
-        for tool_call in self.tool_calls:
-            try:
-                result = ToolRegistry.execute_tool_call(tool_call)
-                self.tool_results.append(
-                    {
-                        "tool_call_id": tool_call["id"],
-                        "role": "tool",
-                        "content": str(result),
-                    }
-                )
-            except Exception as e:
-                self.tool_results.append(
-                    {
-                        "tool_call_id": tool_call["id"],
-                        "role": "tool",
-                        "content": f"Error executing tool: {str(e)}",
-                    }
-                )
 
         for callback in self.callbacks:
             callback()

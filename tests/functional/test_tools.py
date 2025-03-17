@@ -39,7 +39,11 @@ def calculate(expression: str):
         return f"Error calculating: {str(e)}"
 
 
-def test_tool_calls():
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_tool_calls():
     """Test tool calls functionality"""
     client = LLMClient(provider_model=f"{test_provider}/{test_model}")
 
@@ -68,7 +72,7 @@ def test_tool_calls():
     for call in tool_calls:
         print(f"- {call['function']['name']}: {call['function']['arguments']}")
 
-    tool_results = response.get_tool_results()
+    tool_results = await response.get_tool_results()
     print("\nTool Results:")
     for result in tool_results:
         print(f"- {result['tool_call_id']}: {result['content']}")
@@ -76,7 +80,7 @@ def test_tool_calls():
     # Continue conversation with tool results
     if tool_calls:
         print("\nContinuing conversation with tool results:")
-        continuation = response.continue_with_tool_results(client, test_model)
+        continuation = await response.continue_with_tool_results(client, test_model)
 
         for content in continuation.iter_content():
             print(content, end="", flush=True)
