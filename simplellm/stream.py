@@ -23,10 +23,10 @@ class CompletionStream:
     def register_callback(self, func):
         self.callbacks.append(func)
 
-    def iter(self):
+    async def iter(self):
         state = ChatCompletionStreamState()
         role_defined = False
-        for c in self.chunks:
+        async for c in self.chunks:
             # workaround for https://github.com/openai/openai-python/issues/2129
             if role_defined:
                 c.choices[0].delta.role = None
@@ -71,10 +71,10 @@ class CompletionStream:
         for callback in self.callbacks:
             callback()
 
-    def iter_content(self, reasoning=True, include_tool_calls=True):
+    async def iter_content(self, reasoning=True, include_tool_calls=True):
         if reasoning:
             reasoning_started = False
-            for chunk in self.iter():
+            async for chunk in self.iter():
                 reasoning_content = getattr(
                     chunk.choices[0].delta, "reasoning_content", None
                 )
@@ -106,28 +106,28 @@ class CompletionStream:
                         ):
                             yield tool_call_delta.function.arguments
         else:
-            for chunk in self.iter():
+            async for chunk in self.iter():
                 content = chunk.choices[0].delta.content
                 if content:
                     yield content
 
-    def accumulate_stream(self):
+    async def accumulate_stream(self):
         if self._openai_state is None:
-            for _ in self.iter():
+            async for _ in self.iter():
                 pass
         parsed = self._openai_state.get_final_completion()
         return AccumulatedCompletionResponse(parsed)
 
-    def get_tool_calls(self) -> List[Dict[str, Any]]:
+    async def get_tool_calls(self) -> List[Dict[str, Any]]:
         """Get all tool calls from the stream"""
         if self._openai_state is None:
-            for _ in self.iter():
+            async for _ in self.iter():
                 pass
         return self.tool_calls
 
-    def get_tool_results(self) -> List[Dict[str, Any]]:
+    async def get_tool_results(self) -> List[Dict[str, Any]]:
         """Get results from executed tool calls"""
         if self._openai_state is None:
-            for _ in self.iter():
+            async for _ in self.iter():
                 pass
-        return super().get_tool_results()
+        return await super().get_tool_results()

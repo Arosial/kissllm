@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from simplellm import providers
 from simplellm.providers.base import BaseDriver
@@ -23,14 +23,14 @@ class GeneralOpenAIDriver(BaseDriver):
 
     def get_client(self, api_key: Optional[str], base_url: Optional[str]):
         """Create configured OpenAI client with fallback to env vars"""
-        return OpenAI(
+        return AsyncOpenAI(
             api_key=api_key or get_from_env(f"{self.provider.upper()}_API_KEY"),
             base_url=base_url
             or get_from_env(f"{self.provider.upper()}_BASE_URL")
             or get_from_env(f"{self.provider.upper()}_API_BASE"),
         )
 
-    def completion(
+    async def async_completion(
         self,
         messages: List[Dict[str, str]],
         model: str,
@@ -59,7 +59,7 @@ class GeneralOpenAIDriver(BaseDriver):
         # Add any additional parameters
         params.update({k: v for k, v in kwargs.items() if v is not None})
 
-        return self.client.chat.completions.create(**params)
+        return await self.client.chat.completions.create(**params)
 
 
 providers.register_provider_driver(GeneralOpenAIDriver, as_default=True)

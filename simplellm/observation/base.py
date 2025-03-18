@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
-from simplellm.stream import CompletionStream as CompletionStream
 from simplellm.utils import get_from_env as get_from_env
 
 

@@ -9,10 +9,10 @@ from simplellm.utils import get_from_env as get_from_env
 def observe(func):
     """Decorator to add observation to methods using the configured observer"""
 
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         observer = get_observer()
         if observer is None:
-            return func(*args, **kwargs)
+            return await func(*args, **kwargs)
 
         self = args[0]
         provider = self.provider
@@ -34,7 +34,7 @@ def observe(func):
         except Exception as e:
             logging.warning(f"Failed to start observe completion: {str(e)}")
 
-        response = func(*args, **kwargs)
+        response = await func(*args, **kwargs)
         try:
             if not isinstance(response, CompletionStream):
                 observer.completion_end(response=response)

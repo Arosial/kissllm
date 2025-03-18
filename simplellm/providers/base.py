@@ -15,7 +15,7 @@ class BaseDriver(ABC):
         """Initialize provider driver with credentials"""
 
     @abstractmethod
-    def completion(
+    async def async_completion(
         self,
         messages: List[Dict[str, str]],
         model: str,
@@ -26,4 +26,4 @@ class BaseDriver(ABC):
         tool_choice: Optional[Any] = None,
         **kwargs,
     ) -> Any:
-        """Execute LLM completion request"""
+        """Execute LLM completion request asynchronously"""

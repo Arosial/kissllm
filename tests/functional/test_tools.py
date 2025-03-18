@@ -1,5 +1,6 @@
 import os
 
+import pytest
 from dotenv import load_dotenv
 
 from simplellm.client import LLMClient
@@ -39,16 +40,13 @@ def calculate(expression: str):
         return f"Error calculating: {str(e)}"
 
 
-import pytest
-
-
 @pytest.mark.asyncio
 async def test_tool_calls():
     """Test tool calls functionality"""
     client = LLMClient(provider_model=f"{test_provider}/{test_model}")
 
     # Test with specific tools
-    response = client.completion(
+    response = await client.async_completion(
         messages=[
             {
                 "role": "user",
@@ -61,11 +59,11 @@ async def test_tool_calls():
     )
 
     print("\nStreaming response with tool calls:")
-    for content in response.iter_content():
+    async for content in response.iter_content():
         print(content, end="", flush=True)
     print("\n")
 
-    response = response.accumulate_stream()
+    response = await response.accumulate_stream()
     # Get tool calls and results
     tool_calls = response.get_tool_calls()
     print("\nTool Calls:")
@@ -80,19 +78,20 @@ async def test_tool_calls():
     # Continue conversation with tool results
     if tool_calls:
         print("\nContinuing conversation with tool results:")
-        continuation = await response.continue_with_tool_results(client, test_model)
+        continuation = await client.continue_with_tool_results(response, test_model)
 
-        for content in continuation.iter_content():
+        async for content in continuation.iter_content():
             print(content, end="", flush=True)
         print("\n")
 
 
-def test_single_tool_call():
+@pytest.mark.asyncio
+async def test_single_tool_call():
     """Test using a single specific tool"""
     client = LLMClient(provider_model=f"{test_provider}/{test_model}")
 
     # Test with forcing a specific tool
-    response = client.completion(
+    response = await client.async_completion(
         messages=[{"role": "user", "content": "What's 25 * 16?"}],
         tools=[
             {

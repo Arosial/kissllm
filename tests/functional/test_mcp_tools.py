@@ -1,4 +1,3 @@
-import asyncio
 import os
 import tempfile
 
@@ -69,7 +68,7 @@ async def test_mcp_tools(mcp_server_path):
         client = LLMClient(provider_model=f"{test_provider}/{test_model}")
 
         # Test with MCP tools
-        response = client.completion(
+        response = await client.async_completion(
             messages=[
                 {
                     "role": "user",
@@ -82,11 +81,11 @@ async def test_mcp_tools(mcp_server_path):
         )
 
         print("\nStreaming response with MCP tool calls:")
-        for content in response.iter_content():
+        async for content in response.iter_content():
             print(content, end="", flush=True)
         print("\n")
 
-        response = response.accumulate_stream()
+        response = await response.accumulate_stream()
 
         # Get tool calls and results
         tool_calls = response.get_tool_calls()
@@ -102,9 +101,9 @@ async def test_mcp_tools(mcp_server_path):
         # Continue conversation with tool results
         if tool_calls:
             print("\nContinuing conversation with tool results:")
-            continuation = await response.continue_with_tool_results(client, test_model)
+            continuation = await client.continue_with_tool_results(response, test_model)
 
-            for content in continuation.iter_content():
+            async for content in continuation.iter_content():
                 print(content, end="", flush=True)
             print("\n")
     finally:

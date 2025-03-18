@@ -2,7 +2,6 @@ from typing import Dict, Optional, Type
 
 from simplellm.observation.base import BaseObserver
 from simplellm.observation.langfuse import LangfuseObserver
-from simplellm.stream import CompletionStream as CompletionStream
 from simplellm.utils import get_from_env as get_from_env
 
 # Observer registry mapping IDs to classes

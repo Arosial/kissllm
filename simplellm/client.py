@@ -55,7 +55,7 @@ class LLMClient:
         return model
 
     @observe
-    def completion(
+    async def async_completion(
         self,
         messages: List[Dict[str, str]],
         model: str | None = None,
@@ -73,7 +73,7 @@ class LLMClient:
         if tools is True:
             tools = ToolRegistry.get_tools_specs()
 
-        res = self.provider_driver.completion(
+        res = await self.provider_driver.async_completion(
             messages=messages,
             model=model,
             temperature=temperature,
@@ -87,3 +87,31 @@ class LLMClient:
             return CompletionResponse(res)
         else:
             return CompletionStream(res)
+
+    async def continue_with_tool_results(self, response, model=None):
+        """Continue the conversation with tool results"""
+        tool_results = await response.get_tool_results()
+        if not tool_results:
+            return None
+
+        # Get the tool calls
+        tool_calls = response.get_tool_calls()
+
+        # Create messages for continuation
+        messages = []
+
+        for choice in response.choices:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": choice.message.content or "",
+                    "tool_calls": tool_calls,
+                }
+            )
+
+        # Add tool results
+        for result in tool_results:
+            messages.append(result)
+
+        # Make a new completion with the tool results
+        return await self.async_completion(messages=messages, model=model, stream=True)
