@@ -3,7 +3,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-from simplellm.client import LLMClient
+from kissllm.client import LLMClient
 
 load_dotenv()
 test_provider = os.environ["TEST_PROVIDER"]

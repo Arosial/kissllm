@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 from langfuse import Langfuse
 
-from simplellm.observation.base import BaseObserver
+from kissllm.observation.base import BaseObserver
 
 
 class LangfuseObserver(BaseObserver):

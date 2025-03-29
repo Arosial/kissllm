@@ -1,9 +1,9 @@
 import logging
 from functools import partial
 
-from simplellm.observation import get_observer
-from simplellm.stream import CompletionStream
-from simplellm.utils import get_from_env as get_from_env
+from kissllm.observation import get_observer
+from kissllm.stream import CompletionStream
+from kissllm.utils import get_from_env as get_from_env
 
 
 def observe(func):

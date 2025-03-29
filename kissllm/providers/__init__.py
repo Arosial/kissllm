@@ -3,8 +3,8 @@ import pkgutil
 from pathlib import Path
 from typing import Type
 
-from simplellm.providers.base import BaseDriver
-from simplellm.utils import get_from_env
+from kissllm.providers.base import BaseDriver
+from kissllm.utils import get_from_env
 
 PROVIDER_DRIVERS = {}
 DEFAULT_DRIVER = None
@@ -32,7 +32,7 @@ def _auto_import_providers():
     for _, module_name, _ in pkgutil.iter_modules([str(package_dir)]):
         # Skip base.py and files starting with _
         if module_name != "base" and not module_name.startswith("_"):
-            importlib.import_module(f"simplellm.providers.{module_name}")
+            importlib.import_module(f"kissllm.providers.{module_name}")
 
 
 # Automatically import all providers

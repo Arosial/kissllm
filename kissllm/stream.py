@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 from openai.lib.streaming.chat import ChatCompletionStreamState
 from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 
-from simplellm.tools import ToolMixin
+from kissllm.tools import ToolMixin
 
 
 class AccumulatedCompletionResponse(ToolMixin):

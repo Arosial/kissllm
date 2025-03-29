@@ -1,6 +1,6 @@
 # Unified LLM Python API Library
 
-A unified interface for interacting with multiple LLM providers (OpenAI, Anthropic, etc.) with consistent API design.
+A unified interface for interacting with multiple LLM providers (OpenAI compatible only for now) with consistent API design.
 
 ## Features
 
@@ -17,8 +17,8 @@ DEEPSEEK_API_KEY=sk-xxxx
 ```
 
 ```python
-from simplellm import LLMClient
-from simplellm.tools import tool
+from kissllm import LLMClient
+from kissllm.tools import tool
 
 # Example tool definition
 @tool

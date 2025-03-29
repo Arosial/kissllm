@@ -1,8 +1,8 @@
 from typing import Dict, Optional, Type
 
-from simplellm.observation.base import BaseObserver
-from simplellm.observation.langfuse import LangfuseObserver
-from simplellm.utils import get_from_env as get_from_env
+from kissllm.observation.base import BaseObserver
+from kissllm.observation.langfuse import LangfuseObserver
+from kissllm.utils import get_from_env as get_from_env
 
 # Observer registry mapping IDs to classes
 _OBSERVER_REGISTRY: Dict[str, Type["BaseObserver"]] = {"langfuse": LangfuseObserver}

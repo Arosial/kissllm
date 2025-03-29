@@ -1,6 +1,6 @@
 [project]
-name = "simplellm"
-version = "0.1.0"
+name = "kissllm"
+version = "0.0.1"
 description = "Python SDK to call all LLM apis."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,4 +15,5 @@ dependencies = [
 dev = [
     "python-dotenv",
     "pytest>=8.3.4",
+    "pytest-asyncio",
 ]

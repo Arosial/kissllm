@@ -4,8 +4,8 @@ import tempfile
 import pytest
 from dotenv import load_dotenv
 
-from simplellm.client import LLMClient
-from simplellm.tools import ToolRegistry
+from kissllm.client import LLMClient
+from kissllm.tools import ToolRegistry
 
 load_dotenv()
 test_provider = os.environ["TEST_PROVIDER"]

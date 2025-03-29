@@ -2,10 +2,10 @@ from typing import Any, Dict, List, Optional, Union
 
 from openai.types.completion import Completion
 
-from simplellm.observation.decorators import observe
-from simplellm.providers import get_provider_driver
-from simplellm.stream import CompletionStream
-from simplellm.tools import ToolMixin, ToolRegistry
+from kissllm.observation.decorators import observe
+from kissllm.providers import get_provider_driver
+from kissllm.stream import CompletionStream
+from kissllm.tools import ToolMixin, ToolRegistry
 
 
 class CompletionResponse(ToolMixin):

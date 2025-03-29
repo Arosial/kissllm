@@ -2,9 +2,9 @@ from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
-from simplellm import providers
-from simplellm.providers.base import BaseDriver
-from simplellm.utils import get_from_env
+from kissllm import providers
+from kissllm.providers.base import BaseDriver
+from kissllm.utils import get_from_env
 
 
 class GeneralOpenAIDriver(BaseDriver):
