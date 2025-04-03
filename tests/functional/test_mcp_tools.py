@@ -1,14 +1,21 @@
 import os
+import socket
+import subprocess
+import sys
 import tempfile
+import time
+from contextlib import closing
 
 import pytest
 from dotenv import load_dotenv
 
 from kissllm.client import LLMClient
-from kissllm.tools import ToolRegistry
+from kissllm.tools import SSEMCPConfig, StdioMCPConfig, ToolRegistry
 
 load_dotenv()
-test_provider = os.environ["TEST_PROVIDER"]
+test_provider = os.environ.get(
+    "TEST_PROVIDER", "openai"
+)  # Default to openai if not set
 test_model = os.environ["TEST_MODEL"]
 
 # Create a simple MCP server file for testing
@@ -28,11 +35,24 @@ def multiply(a: int, b: int) -> int:
     return a * b
 
 if __name__ == "__main__":
-    mcp.run()
+    import sys
+    mode = sys.argv[1]
+    if len(sys.argv) > 2:
+        port = int(sys.argv[2])
+        mcp.settings.port = port
+    mcp.run(mode)
 """
 
 
-@pytest.fixture
+def find_free_port():
+    """Find an available TCP port."""
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(("", 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
 def mcp_server_path():
     """Create a temporary MCP server file for testing"""
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as f:
@@ -41,71 +61,193 @@ def mcp_server_path():
 
     yield server_path
 
-    # Clean up the temporary file
+    # Clean up the temporary file only if it exists
+    if server_path and os.path.exists(server_path):
+        try:
+            os.unlink(server_path)
+        except OSError as e:
+            # Log error but don't fail the test run
+            print(f"Error removing temporary file {server_path}: {e}")
+
+
+@pytest.fixture(scope="module")
+def sse_mcp_server(mcp_server_path):
+    """Starts an MCP server with SSE transport in a subprocess."""
+    port = find_free_port()
+    host = "localhost"
+    base_url = f"http://{host}:{port}"
+    sse_url = f"{base_url}/sse"
+
+    # Command to run the server script with the chosen port
+    cmd = [sys.executable, mcp_server_path, "sse", str(port)]
+
+    # Start the server process
+    print(f"\nStarting SSE MCP server: {' '.join(cmd)}")
+    server_process = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+
+    # Wait a moment for the server to start up
+    time.sleep(2)  # Adjust sleep time if needed
+
+    # Check if the process started correctly
+    if server_process.poll() is not None:
+        stdout, stderr = server_process.communicate()
+        pytest.fail(
+            f"SSE MCP server failed to start. Return code: {server_process.returncode}\n"
+            f"Stdout:\n{stdout.decode()}\nStderr:\n{stderr.decode()}"
+        )
+
+    print(f"SSE MCP server running at {sse_url}")
+    yield sse_url
+
+    # Cleanup: terminate the server process
+    print(f"\nStopping SSE MCP server (PID: {server_process.pid})...")
+    server_process.terminate()
     try:
-        os.unlink(server_path)
-    except:
-        pass
+        server_process.wait(timeout=5)  # Wait for graceful termination
+        print("SSE MCP server stopped.")
+    except subprocess.TimeoutExpired:
+        print("Server did not terminate gracefully, killing...")
+        server_process.kill()
+        server_process.wait()
+        print("SSE MCP server killed.")
 
 
-async def register_and_connect_mcp_server(server_path):
-    """Helper to register and connect to an MCP server"""
-    server_id = ToolRegistry.register_mcp_server(server_path)
-    tools = await ToolRegistry.connect_mcp_server(server_id)
-    return server_id, tools
+async def register_and_connect_mcp_server(
+    server_id: str, config: StdioMCPConfig | SSEMCPConfig
+):
+    """Helper to register and connect to an MCP server."""
+    if server_id in ToolRegistry._mcp_connections:
+        print(f"Server {server_id} already registered. Disconnecting first.")
+        await ToolRegistry.disconnect_mcp_server(server_id)
+
+    ToolRegistry.register_mcp_server(server_id, config)
+    print(f"Connecting to MCP server '{server_id}' with config: {config}")
+    discovered_tools = await ToolRegistry.connect_mcp_server(server_id)
+    print(f"Discovered tools for '{server_id}': {discovered_tools}")
+    return discovered_tools
+
+
+# Helper function to perform the core LLM interaction and assertions
+async def _perform_mcp_tool_test(client: LLMClient, server_id: str):
+    """Performs the LLM interaction part of the MCP tool test."""
+    # Test with MCP tools
+    response = await client.async_completion(
+        messages=[
+            {
+                "role": "user",
+                "content": "What is 15 + 27 and 8 * 9?",
+            }
+        ],
+        tools=True,  # Use all registered tools (including MCP ones)
+        tool_choice="auto",
+        stream=True,
+    )
+
+    print(f"\nStreaming response with MCP tool calls (Server: {server_id}):")
+    async for content in response.iter_content():
+        print(content, end="", flush=True)
+    print("\n")
+
+    response = await response.accumulate_stream()
+
+    # Get tool calls and results
+    tool_calls = response.get_tool_calls()
+    print("\nTool Calls:")
+    # Check that the correct tools were called (names might include server_id prefix)
+    called_tool_names = {call["function"]["name"] for call in tool_calls}
+    assert any(name.endswith("_add") for name in called_tool_names)
+    assert any(name.endswith("_multiply") for name in called_tool_names)
+
+    for call in tool_calls:
+        print(f"- {call['function']['name']}: {call['function']['arguments']}")
+        # Basic check for argument structure
+        assert "arguments" in call["function"]
+        # Depending on the model, arguments might be a string or dict
+        # assert isinstance(call['function']['arguments'], (str, dict))
+
+    tool_results = await response.get_tool_results()
+    print("\nTool Results:")
+    assert len(tool_results) == len(tool_calls)  # Ensure one result per call
+    for result in tool_results:
+        assert "tool_call_id" in result
+        assert "content" in result
+        print(f"- {result['tool_call_id']}: {result['content']}")
+
+    # Continue conversation with tool results
+    if tool_calls:
+        print("\nContinuing conversation with tool results:")
+        continuation = await client.continue_with_tool_results(response, test_model)
+
+        final_content = ""
+        async for content in continuation.iter_content():
+            print(content, end="", flush=True)
+            final_content += content
+        print("\n")
+        # Basic check that the final response contains the calculated numbers
+        assert "42" in final_content  # 15 + 27
+        assert "72" in final_content  # 8 * 9
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools(mcp_server_path):
-    """Test MCP tools functionality"""
-    # Register and connect to the MCP server
-    server_id, tools = await register_and_connect_mcp_server(mcp_server_path)
+async def test_mcp_stdio_tools(mcp_server_path):
+    """Test MCP tools functionality using stdio transport."""
+    server_id = "test_stdio_server"
+    config = StdioMCPConfig(command=sys.executable, args=[mcp_server_path, "stdio"])
     try:
-        # Verify that the tools were registered
-        assert "add" in tools
-        assert "multiply" in tools
+        # Register and connect to the MCP server
+        discovered_tools = await register_and_connect_mcp_server(server_id, config)
+
+        # Verify that the tools were discovered
+        assert "add" in discovered_tools
+        assert "multiply" in discovered_tools
+
+        # Verify tools are registered with correct IDs in the registry
+        registered_tool_specs = ToolRegistry.get_tools_specs()
+        registered_tool_names = [
+            spec["function"]["name"] for spec in registered_tool_specs
+        ]
+        assert f"{server_id}_add" in registered_tool_names
+        assert f"{server_id}_multiply" in registered_tool_names
 
         client = LLMClient(provider_model=f"{test_provider}/{test_model}")
 
-        # Test with MCP tools
-        response = await client.async_completion(
-            messages=[
-                {
-                    "role": "user",
-                    "content": "What is 15 + 27 and 8 * 9?",
-                }
-            ],
-            tools=True,  # Use all registered tools
-            tool_choice="auto",
-            stream=True,
-        )
+        # Perform the actual LLM interaction test
+        await _perform_mcp_tool_test(client, server_id)
+    finally:
+        # Clean up by disconnecting from the MCP server
+        await ToolRegistry.disconnect_mcp_server(server_id)
 
-        print("\nStreaming response with MCP tool calls:")
-        async for content in response.iter_content():
-            print(content, end="", flush=True)
-        print("\n")
 
-        response = await response.accumulate_stream()
+@pytest.mark.asyncio
+async def test_mcp_sse_tools(sse_mcp_server):
+    """Test MCP tools functionality using SSE transport."""
+    sse_url = sse_mcp_server
+    server_id = "test_sse_server"
+    config = SSEMCPConfig(url=sse_url)
 
-        # Get tool calls and results
-        tool_calls = response.get_tool_calls()
-        print("\nTool Calls:")
-        for call in tool_calls:
-            print(f"- {call['function']['name']}: {call['function']['arguments']}")
+    try:
+        # Register and connect to the MCP server
+        discovered_tools = await register_and_connect_mcp_server(server_id, config)
 
-        tool_results = await response.get_tool_results()
-        print("\nTool Results:")
-        for result in tool_results:
-            print(f"- {result['tool_call_id']}: {result['content']}")
+        # Verify that the tools were discovered
+        assert "add" in discovered_tools
+        assert "multiply" in discovered_tools
 
-        # Continue conversation with tool results
-        if tool_calls:
-            print("\nContinuing conversation with tool results:")
-            continuation = await client.continue_with_tool_results(response, test_model)
+        # Verify tools are registered with correct IDs in the registry
+        registered_tool_specs = ToolRegistry.get_tools_specs()
+        registered_tool_names = [
+            spec["function"]["name"] for spec in registered_tool_specs
+        ]
+        assert f"{server_id}_add" in registered_tool_names
+        assert f"{server_id}_multiply" in registered_tool_names
 
-            async for content in continuation.iter_content():
-                print(content, end="", flush=True)
-            print("\n")
+        client = LLMClient(provider_model=f"{test_provider}/{test_model}")
+
+        # Perform the actual LLM interaction test
+        await _perform_mcp_tool_test(client, server_id)
+
     finally:
         # Clean up by disconnecting from the MCP server
         await ToolRegistry.disconnect_mcp_server(server_id)
