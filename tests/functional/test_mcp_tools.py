@@ -10,7 +10,8 @@ import pytest
 from dotenv import load_dotenv
 
 from kissllm.client import LLMClient
-from kissllm.tools import SSEMCPConfig, StdioMCPConfig, ToolRegistry
+from kissllm.mcp import MCPManager, SSEMCPConfig, StdioMCPConfig
+from kissllm.tools import ToolManager
 
 load_dotenv()
 test_provider = os.environ.get(
@@ -114,17 +115,28 @@ def sse_mcp_server(mcp_server_path):
         print("SSE MCP server killed.")
 
 
-async def register_and_connect_mcp_server(
-    server_id: str, config: StdioMCPConfig | SSEMCPConfig
-):
-    """Helper to register and connect to an MCP server."""
-    if server_id in ToolRegistry._mcp_connections:
-        print(f"Server {server_id} already registered. Disconnecting first.")
-        await ToolRegistry.disconnect_mcp_server(server_id)
+@pytest.fixture(scope="function")
+def tool_registry():
+    """Provides a ToolRegistry instance with managers for MCP tests."""
 
-    ToolRegistry.register_mcp_server(server_id, config)
-    print(f"Connecting to MCP server '{server_id}' with config: {config}")
-    discovered_tools = await ToolRegistry.connect_mcp_server(server_id)
+    mcp_manager = MCPManager()
+    registry = ToolManager(mcp_manager=mcp_manager)
+    return registry
+
+
+async def register_and_connect_mcp_server(
+    registry: ToolManager, server_id: str, config: StdioMCPConfig | SSEMCPConfig
+):
+    """Helper to register and connect to an MCP server using a ToolRegistry instance."""
+    # Registration and connection are now handled by MCPManager within the registry
+    print(
+        f"Registering and connecting to MCP server '{server_id}' with config: {config}"
+    )
+    # register_server now handles connection and returns the server_id if successful
+    await registry.mcp_manager.register_server(server_id, config)
+    # Retrieve discovered tools after connection (assuming register_server connects)
+    connection = registry.mcp_manager._mcp_connections.get(server_id)
+    discovered_tools = [tool.name for tool in connection.tools] if connection else []
     print(f"Discovered tools for '{server_id}': {discovered_tools}")
     return discovered_tools
 
@@ -167,6 +179,7 @@ async def _perform_mcp_tool_test(client: LLMClient, server_id: str):
         # Depending on the model, arguments might be a string or dict
         # assert isinstance(call['function']['arguments'], (str, dict))
 
+    # get_tool_results uses the registry stored in the response object
     tool_results = await response.get_tool_results()
     print("\nTool Results:")
     assert len(tool_results) == len(tool_calls)  # Ensure one result per call
@@ -191,63 +204,73 @@ async def _perform_mcp_tool_test(client: LLMClient, server_id: str):
 
 
 @pytest.mark.asyncio
-async def test_mcp_stdio_tools(mcp_server_path):
+async def test_mcp_stdio_tools(mcp_server_path, tool_registry):
     """Test MCP tools functionality using stdio transport."""
     server_id = "test_stdio_server"
     config = StdioMCPConfig(command=sys.executable, args=[mcp_server_path, "stdio"])
     try:
-        # Register and connect to the MCP server
-        discovered_tools = await register_and_connect_mcp_server(server_id, config)
+        # Register and connect using the provided registry instance
+        discovered_tools = await register_and_connect_mcp_server(
+            tool_registry, server_id, config
+        )
 
         # Verify that the tools were discovered
         assert "add" in discovered_tools
         assert "multiply" in discovered_tools
 
-        # Verify tools are registered with correct IDs in the registry
-        registered_tool_specs = ToolRegistry.get_tools_specs()
+        # Verify tools are registered with correct IDs in the specific registry instance
+        registered_tool_specs = tool_registry.get_tools_specs()
         registered_tool_names = [
             spec["function"]["name"] for spec in registered_tool_specs
         ]
         assert f"{server_id}_add" in registered_tool_names
         assert f"{server_id}_multiply" in registered_tool_names
 
-        client = LLMClient(provider_model=f"{test_provider}/{test_model}")
+        # Initialize client with the registry containing the MCP connection
+        client = LLMClient(
+            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
+        )
 
         # Perform the actual LLM interaction test
         await _perform_mcp_tool_test(client, server_id)
     finally:
-        # Clean up by disconnecting from the MCP server
-        await ToolRegistry.disconnect_mcp_server(server_id)
+        # Clean up by unregistering from the specific registry instance
+        await tool_registry.mcp_manager.unregister_server(server_id)
 
 
 @pytest.mark.asyncio
-async def test_mcp_sse_tools(sse_mcp_server):
+async def test_mcp_sse_tools(sse_mcp_server, tool_registry):
     """Test MCP tools functionality using SSE transport."""
     sse_url = sse_mcp_server
     server_id = "test_sse_server"
     config = SSEMCPConfig(url=sse_url)
 
     try:
-        # Register and connect to the MCP server
-        discovered_tools = await register_and_connect_mcp_server(server_id, config)
+        # Register and connect using the provided registry instance
+        discovered_tools = await register_and_connect_mcp_server(
+            tool_registry, server_id, config
+        )
 
         # Verify that the tools were discovered
         assert "add" in discovered_tools
         assert "multiply" in discovered_tools
 
-        # Verify tools are registered with correct IDs in the registry
-        registered_tool_specs = ToolRegistry.get_tools_specs()
+        # Verify tools are registered with correct IDs in the specific registry instance
+        registered_tool_specs = tool_registry.get_tools_specs()
         registered_tool_names = [
             spec["function"]["name"] for spec in registered_tool_specs
         ]
         assert f"{server_id}_add" in registered_tool_names
         assert f"{server_id}_multiply" in registered_tool_names
 
-        client = LLMClient(provider_model=f"{test_provider}/{test_model}")
+        # Initialize client with the registry containing the MCP connection
+        client = LLMClient(
+            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
+        )
 
         # Perform the actual LLM interaction test
         await _perform_mcp_tool_test(client, server_id)
 
     finally:
-        # Clean up by disconnecting from the MCP server
-        await ToolRegistry.disconnect_mcp_server(server_id)
+        # Clean up by unregistering from the specific registry instance
+        await tool_registry.mcp_manager.unregister_server(server_id)

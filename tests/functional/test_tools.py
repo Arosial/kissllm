@@ -4,14 +4,18 @@ import pytest
 from dotenv import load_dotenv
 
 from kissllm.client import LLMClient
-from kissllm.tools import tool
+from kissllm.tools import LocalToolManager, ToolManager
 
 load_dotenv()
 test_provider = os.environ["TEST_PROVIDER"]
 test_model = os.environ["TEST_MODEL"]
 
+local_manager = LocalToolManager()
+register_tool = local_manager.register
 
-@tool
+
+# Define tool functions (without decorator initially)
+@register_tool
 def get_weather(location: str, unit: str = "celsius"):
     """Get the current weather in a given location"""
     # This is a mock implementation
@@ -29,7 +33,7 @@ def get_weather(location: str, unit: str = "celsius"):
     return f"The weather in {location} is {data['condition']} with a temperature of {temp}°{unit[0].upper()}"
 
 
-@tool
+@register_tool
 def calculate(expression: str):
     """Calculate the result of a mathematical expression"""
     try:
@@ -40,10 +44,22 @@ def calculate(expression: str):
         return f"Error calculating: {str(e)}"
 
 
+@pytest.fixture(scope="function")
+def tool_registry():
+    """Creates managers and a ToolRegistry, registering local tools."""
+
+    # Create the registry, passing the managers
+    registry = ToolManager(local_manager=local_manager)
+    return registry
+
+
 @pytest.mark.asyncio
-async def test_tool_calls():
+async def test_tool_calls(tool_registry):
     """Test tool calls functionality"""
-    client = LLMClient(provider_model=f"{test_provider}/{test_model}")
+    # Pass the pre-configured registry to the client
+    client = LLMClient(
+        provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
+    )
 
     # Test with specific tools
     response = await client.async_completion(
@@ -70,6 +86,7 @@ async def test_tool_calls():
     for call in tool_calls:
         print(f"- {call['function']['name']}: {call['function']['arguments']}")
 
+    # get_tool_results now uses the registry stored in the response object
     tool_results = await response.get_tool_results()
     print("\nTool Results:")
     for result in tool_results:
@@ -86,9 +103,14 @@ async def test_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_single_tool_call():
+async def test_single_tool_call(tool_registry):
     """Test using a single specific tool"""
-    client = LLMClient(provider_model=f"{test_provider}/{test_model}")
+    # Pass the pre-configured registry to the client
+    # Although we specify tools manually here, the client needs the registry
+    # if tool execution were needed later via get_tool_results.
+    client = LLMClient(
+        provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
+    )
 
     # Test with forcing a specific tool
     response = await client.async_completion(
@@ -120,12 +142,15 @@ async def test_single_tool_call():
         for call in tool_calls:
             print(f"- {call.function.name}: {call.function.arguments}")
 
-            # Execute the tool call manually
+            # Execute the tool call using the registry associated with the response
+            # (This demonstrates manual execution if needed, though response.get_tool_results() is preferred)
+            tool_results = (
+                await response.get_tool_results()
+            )  # This uses the registry implicitly
             result = None
-            if call.function.name == "calculate":
-                import json
-
-                args = json.loads(call.function.arguments)
-                result = calculate(**args)
+            for res in tool_results:
+                if res["tool_call_id"] == call.id:
+                    result = res["content"]
+                    break
 
             print(f"  Result: {result}")

@@ -1,19 +1,19 @@
-from typing import Any, Dict, List
-
 from openai.lib.streaming.chat import ChatCompletionStreamState
 from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 
-from kissllm.tools import ToolMixin
+from kissllm.tools import ToolManager, ToolMixin
 
 
 class AccumulatedCompletionResponse(ToolMixin):
-    def __init__(self, response: ParsedChatCompletion):
+    def __init__(self, response: ParsedChatCompletion, tool_registry: ToolManager):
         self.__dict__.update(response.__dict__)
+        ToolMixin.__init__(self, tool_registry)
 
 
 class CompletionStream:
-    def __init__(self, chunks):
+    def __init__(self, chunks, tool_registry: "ToolManager"):
         self.chunks = chunks
+        self._tool_registry = tool_registry  # Store the registry
         self._openai_state = None
         self.callbacks = []
         self.tool_calls = []
@@ -113,21 +113,11 @@ class CompletionStream:
 
     async def accumulate_stream(self):
         if self._openai_state is None:
-            async for _ in self.iter():
+            async for _ in self.iter():  # Ensure stream is consumed
                 pass
         parsed = self._openai_state.get_final_completion()
-        return AccumulatedCompletionResponse(parsed)
-
-    async def get_tool_calls(self) -> List[Dict[str, Any]]:
-        """Get all tool calls from the stream"""
-        if self._openai_state is None:
-            async for _ in self.iter():
-                pass
-        return self.tool_calls
-
-    async def get_tool_results(self) -> List[Dict[str, Any]]:
-        """Get results from executed tool calls"""
-        if self._openai_state is None:
-            async for _ in self.iter():
-                pass
-        return await super().get_tool_results()
+        # Pass the registry to the accumulated response
+        acc_response = AccumulatedCompletionResponse(parsed, self._tool_registry)
+        # Copy potentially populated tool calls from stream processing
+        acc_response.tool_calls = self.tool_calls
+        return acc_response

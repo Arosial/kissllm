@@ -5,12 +5,13 @@ from openai.types.completion import Completion
 from kissllm.observation.decorators import observe
 from kissllm.providers import get_provider_driver
 from kissllm.stream import CompletionStream
-from kissllm.tools import ToolMixin, ToolRegistry
+from kissllm.tools import ToolManager, ToolMixin
 
 
 class CompletionResponse(ToolMixin):
-    def __init__(self, response: Completion):
+    def __init__(self, response: Completion, tool_registry: ToolManager):
         self.__dict__.update(response.__dict__)
+        ToolMixin.__init__(self, tool_registry)
 
 
 class LLMClient:
@@ -22,15 +23,17 @@ class LLMClient:
         provider_model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
+        tool_registry: Optional[ToolManager] = None,
     ):
         """
-        Initialize LLM client with specific provider
+        Initialize LLM client with specific provider.
 
         Args:
-            provider: Provider name (e.g. "openai", "anthropic")
-            provider_model: Provider along with default model to use.
-            api_key: Provider API key
-            base_url: Provider base url
+            provider: Provider name (e.g. "openai", "anthropic").
+            provider_model: Provider along with default model to use (e.g., "openai/gpt-4").
+            api_key: Provider API key.
+            base_url: Provider base URL.
+            tool_registry: An optional ToolRegistry instance. If None, a new one is created.
         """
         self.default_model = None
         if provider_model:
@@ -44,6 +47,16 @@ class LLMClient:
         self.provider_driver = get_provider_driver(self.provider)(
             self.provider, api_key=api_key, base_url=base_url
         )
+        if tool_registry:
+            self.tool_registry = tool_registry
+        else:
+            # Create default managers if no registry is provided
+            from kissllm.mcp import MCPManager
+            from kissllm.tools import LocalToolManager
+
+            local_manager = LocalToolManager()
+            mcp_manager = MCPManager()
+            self.tool_registry = ToolManager(local_manager, mcp_manager)
 
     def get_model(self, model):
         if model is None:
@@ -69,9 +82,13 @@ class LLMClient:
         """Execute LLM completion with provider-specific implementation"""
         model = self.get_model(model)
 
-        # Use registered tools if tools parameter is True
+        # Use registered tools from the client's registry if tools parameter is True
         if tools is True:
-            tools = ToolRegistry.get_tools_specs()
+            tools = self.tool_registry.get_tools_specs()
+            if not tools:
+                # If tools=True but no tools are registered, don't send empty list
+                # Some providers might error on empty tools list
+                tools = None
 
         res = await self.provider_driver.async_completion(
             messages=messages,
@@ -84,12 +101,15 @@ class LLMClient:
             **kwargs,
         )
         if not stream:
-            return CompletionResponse(res)
+            # Pass the client's tool registry to the response object
+            return CompletionResponse(res, self.tool_registry)
         else:
-            return CompletionStream(res)
+            # Pass the client's tool registry to the stream object
+            return CompletionStream(res, self.tool_registry)
 
     async def continue_with_tool_results(self, response, model=None):
         """Continue the conversation with tool results"""
+        # Pass the client's tool registry to get results
         tool_results = await response.get_tool_results()
         if not tool_results:
             return None
