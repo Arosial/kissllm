@@ -1,34 +1,15 @@
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
+from . import MCPConfig, SSEMCPConfig, StdioMCPConfig
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class StdioMCPConfig:
-    """Configuration for an MCP server connected via stdio."""
-
-    command: str
-    args: List[str]
-    env: Optional[Dict[str, str]] = None
-    type: Literal["stdio"] = "stdio"
-
-
-@dataclass
-class SSEMCPConfig:
-    """Configuration for an MCP server connected via SSE."""
-
-    url: str
-    type: Literal["sse"] = "sse"
-
-
-MCPConfig = Union[StdioMCPConfig, SSEMCPConfig]
 
 
 @dataclass

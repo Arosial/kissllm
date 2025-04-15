@@ -10,7 +10,8 @@ import pytest
 from dotenv import load_dotenv
 
 from kissllm.client import LLMClient
-from kissllm.mcp import MCPManager, SSEMCPConfig, StdioMCPConfig
+from kissllm.mcp import SSEMCPConfig, StdioMCPConfig
+from kissllm.mcp.manager import MCPManager
 from kissllm.tools import ToolManager
 
 load_dotenv()
