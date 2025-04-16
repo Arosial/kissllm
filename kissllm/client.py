@@ -51,7 +51,7 @@ class LLMClient:
             self.tool_registry = tool_registry
         else:
             # Create default managers if no registry is provided
-            from kissllm.mcp import MCPManager
+            from kissllm.mcp.manager import MCPManager
             from kissllm.tools import LocalToolManager
 
             local_manager = LocalToolManager()

@@ -3,7 +3,7 @@ import logging
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, get_type_hints
 
-from .mcp import MCPManager
+from kissllm.mcp.manager import MCPManager
 
 logger = logging.getLogger(__name__)
 
