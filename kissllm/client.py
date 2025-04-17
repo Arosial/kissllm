@@ -9,7 +9,7 @@ from kissllm.tools import ToolManager, ToolMixin
 
 
 class CompletionResponse(ToolMixin):
-    def __init__(self, response: Completion, tool_registry: ToolManager):
+    def __init__(self, response: Completion, tool_registry: Optional[ToolManager]):
         self.__dict__.update(response.__dict__)
         ToolMixin.__init__(self, tool_registry)
 
@@ -47,16 +47,7 @@ class LLMClient:
         self.provider_driver = get_provider_driver(self.provider)(
             self.provider, api_key=api_key, base_url=base_url
         )
-        if tool_registry:
-            self.tool_registry = tool_registry
-        else:
-            # Create default managers if no registry is provided
-            from kissllm.mcp.manager import MCPManager
-            from kissllm.tools import LocalToolManager
-
-            local_manager = LocalToolManager()
-            mcp_manager = MCPManager()
-            self.tool_registry = ToolManager(local_manager, mcp_manager)
+        self.tool_registry = tool_registry
 
     def get_model(self, model):
         if model is None:
@@ -83,7 +74,7 @@ class LLMClient:
         model = self.get_model(model)
 
         # Use registered tools from the client's registry if tools parameter is True
-        if tools is True:
+        if tools is True and self.tool_registry:
             tools = self.tool_registry.get_tools_specs()
             if not tools:
                 # If tools=True but no tools are registered, don't send empty list

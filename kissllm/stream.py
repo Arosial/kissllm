@@ -1,3 +1,5 @@
+from typing import Optional
+
 from openai.lib.streaming.chat import ChatCompletionStreamState
 from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 
@@ -5,13 +7,15 @@ from kissllm.tools import ToolManager, ToolMixin
 
 
 class AccumulatedCompletionResponse(ToolMixin):
-    def __init__(self, response: ParsedChatCompletion, tool_registry: ToolManager):
+    def __init__(
+        self, response: ParsedChatCompletion, tool_registry: Optional[ToolManager]
+    ):
         self.__dict__.update(response.__dict__)
         ToolMixin.__init__(self, tool_registry)
 
 
 class CompletionStream:
-    def __init__(self, chunks, tool_registry: "ToolManager"):
+    def __init__(self, chunks, tool_registry: Optional[ToolManager]):
         self.chunks = chunks
         self._tool_registry = tool_registry
         self._consumed = False

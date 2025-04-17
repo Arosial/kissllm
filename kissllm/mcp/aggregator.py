@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -35,8 +34,8 @@ class MCPAggregatorServer(FastMCP):
     ):
         self.settings = Settings(**settings)
 
-        self._backend_configs = backend_configs
-        self._mcp_manager = MCPManager()
+        # Initialize MCPManager with backend configs
+        self._mcp_manager = MCPManager(mcp_configs=backend_configs)
 
         # Mappings to route requests
         # aggregator_tool_name -> (server_name, original_tool_name)
@@ -57,54 +56,16 @@ class MCPAggregatorServer(FastMCP):
 
     @asynccontextmanager
     async def _lifespan(self, server: MCPServer) -> AsyncIterator[object]:
-        """Lifespan context manager to connect/disconnect backends."""
+        """Lifespan context manager to manage backend connections using MCPManager."""
         logger.info("MCP Aggregator Server lifespan starting...")
-        await self._connect_backends()
-        try:
-            yield {}
-        finally:
-            logger.info("MCP Aggregator Server lifespan shutting down...")
-            await self._disconnect_backends()
-
-    async def _connect_backends(self):
-        """Connect to all configured backend MCP servers."""
-        logger.info(
-            f"Connecting to {len(self._backend_configs)} backend MCP servers..."
-        )
-        connect_tasks = []
-
-        for config in self._backend_configs:
-            # Ensure backend configs have names
-            if not config.name:
-                raise ValueError("Backend MCPConfig must have a 'name' attribute.")
-            server_name = config.name
-            logger.info(f"Initiating connection to backend server: {server_name}")
-            connect_tasks.append(self._mcp_manager.register_server(config))
-
-        results = await asyncio.gather(*connect_tasks, return_exceptions=True)
-
-        connected_count = 0
-        # Iterate through configs and results together
-        for config, result in zip(self._backend_configs, results):
-            server_name = config.name
-            if isinstance(result, Exception):
-                logger.error(
-                    f"Failed to connect to backend server {server_name}: {result}",
-                    exc_info=result,
-                )
-            else:
-                # Result is the server name if successful
-                logger.info(f"Successfully connected to backend server {server_name}.")
-                connected_count += 1
-        logger.info(
-            f"Finished connecting to backends. {connected_count} successful connections."
-        )
-
-    async def _disconnect_backends(self):
-        """Disconnect from all backend MCP servers."""
-        logger.info("Disconnecting from all backend MCP servers...")
-        await self._mcp_manager.unregister_all()
-        logger.info("Finished disconnecting from backends.")
+        # Use MCPManager as a context manager to handle connections
+        async with self._mcp_manager:
+            logger.info("MCP Manager entered, backends should be connected.")
+            try:
+                yield {}  # Server runs while in this block
+            finally:
+                logger.info("MCP Aggregator Server lifespan shutting down...")
+        logger.info("MCP Manager exited, backends should be disconnected.")
 
     async def list_tools(self) -> list[MCPTool]:
         """List tools aggregated from all connected backends."""

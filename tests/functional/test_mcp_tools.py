@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 from contextlib import closing
+from typing import List
 
 import pytest
 from dotenv import load_dotenv
@@ -161,33 +162,14 @@ def mcp_aggregator_server(mcp_server_path):
 
 @pytest.fixture(scope="function")
 def tool_registry():
-    """Provides a ToolRegistry instance with managers for MCP tests."""
-
-    mcp_manager = MCPManager()
-    registry = ToolManager(mcp_manager=mcp_manager)
+    """Provides a ToolManager instance, potentially without MCP configured initially."""
+    # Tests will add MCPManager as needed
+    registry = ToolManager()
     return registry
 
 
-async def register_and_connect_mcp_server(
-    registry: ToolManager, config: StdioMCPConfig | SSEMCPConfig
-):
-    """Helper to register and connect to an MCP server using a ToolRegistry instance."""
-    server_name = config.name
-    # Registration and connection are now handled by MCPManager within the registry
-    print(
-        f"Registering and connecting to MCP server '{server_name}' with config: {config}"
-    )
-    # register_server now handles connection and returns the server_name if successful
-    await registry.mcp_manager.register_server(config)
-    # Retrieve discovered tools after connection
-    connection = registry.mcp_manager._mcp_connections.get(server_name)
-    discovered_tools = [tool.name for tool in connection.tools] if connection else []
-    print(f"Discovered tools for '{server_name}': {discovered_tools}")
-    return discovered_tools
-
-
 # Helper function to perform the core LLM interaction and assertions
-async def _perform_mcp_tool_test(client: LLMClient, server_name: str):
+async def _perform_mcp_tool_test(client: LLMClient, expected_tool_suffixes: List[str]):
     """Performs the LLM interaction part of the MCP tool test."""
     # Test with MCP tools
     response = await client.async_completion(
@@ -202,7 +184,7 @@ async def _perform_mcp_tool_test(client: LLMClient, server_name: str):
         stream=True,
     )
 
-    print(f"\nStreaming response with MCP tool calls (Server: {server_name}):")
+    print("\nStreaming response with MCP tool calls:")
     async for content in response.iter_content():
         print(content, end="", flush=True)
     print("\n")
@@ -212,10 +194,13 @@ async def _perform_mcp_tool_test(client: LLMClient, server_name: str):
     # Get tool calls and results
     tool_calls = response.get_tool_calls()
     print("\nTool Calls:")
-    # Check that the correct tools were called (names might include server_id prefix)
+    # Check that the correct tools were called based on expected suffixes
     called_tool_names = {call["function"]["name"] for call in tool_calls}
-    assert any(name.endswith("_add") for name in called_tool_names)
-    assert any(name.endswith("_multiply") for name in called_tool_names)
+    print(f"Called tool names: {called_tool_names}")
+    for suffix in expected_tool_suffixes:
+        assert any(name.endswith(suffix) for name in called_tool_names), (
+            f"Expected tool ending with '{suffix}' was not called."
+        )
 
     for call in tool_calls:
         print(f"- {call['function']['name']}: {call['function']['arguments']}")
@@ -245,127 +230,114 @@ async def _perform_mcp_tool_test(client: LLMClient, server_name: str):
         print("\n")
         # Basic check that the final response contains the calculated numbers
         assert "42" in final_content  # 15 + 27
-        assert "72" in final_content  # 8 * 9
+        assert "72" in final_content or "72.0" in final_content  # 8 * 9
 
 
 @pytest.mark.asyncio
-async def test_mcp_stdio_tools(mcp_server_path, tool_registry):
+async def test_mcp_stdio_tools(mcp_server_path):
     """Test MCP tools functionality using stdio transport."""
     server_name = "test_stdio_server"
-    # Update config to call the example script with 'simple stdio' args and add name
     config = StdioMCPConfig(
         name=server_name,
         command=sys.executable,
         args=[mcp_server_path, "simple", "stdio"],
     )
-    try:
-        # Register and connect using the provided registry instance
-        discovered_tools = await register_and_connect_mcp_server(tool_registry, config)
 
-        # Verify that the tools were discovered
-        assert "add" in discovered_tools
-        assert "multiply" in discovered_tools
+    # Create MCPManager with the config
+    mcp_manager = MCPManager(mcp_configs=[config])
 
-        # Verify tools are registered with correct IDs in the specific registry instance
-        registered_tool_specs = tool_registry.get_tools_specs()
+    # Use MCPManager as context manager to handle connection lifecycle
+    async with mcp_manager:
+        # Create ToolManager using the context-managed MCPManager
+        tool_manager = ToolManager(mcp_manager=mcp_manager)
+
+        # Verify tools are registered within the manager's context
+        registered_tool_specs = tool_manager.get_tools_specs()
         registered_tool_names = [
             spec["function"]["name"] for spec in registered_tool_specs
         ]
-        # Tool names are now serverName_toolName
+        print(f"Registered tools (stdio): {registered_tool_names}")
         assert f"{server_name}_add" in registered_tool_names
         assert f"{server_name}_multiply" in registered_tool_names
 
-        # Initialize client with the registry containing the MCP connection
+        # Initialize client with the ToolManager
         client = LLMClient(
-            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
+            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_manager
         )
 
         # Perform the actual LLM interaction test
-        await _perform_mcp_tool_test(client, server_name)
-    finally:
-        # Clean up by unregistering from the specific registry instance
-        await tool_registry.mcp_manager.unregister_server(server_name)
+        await _perform_mcp_tool_test(client, ["_add", "_multiply"])
+
+    # No explicit unregister needed, handled by async with
 
 
 @pytest.mark.asyncio
-async def test_mcp_aggregator_tools(mcp_aggregator_server, tool_registry):
+async def test_mcp_aggregator_tools(mcp_aggregator_server):
     """Test MCP tools functionality via the MCPAggregatorServer."""
     aggregator_sse_url = mcp_aggregator_server
-    # The aggregator server itself needs a name in its config for ToolManager
     aggregator_server_name = "test_aggregator"
     config = SSEMCPConfig(name=aggregator_server_name, url=aggregator_sse_url)
 
-    try:
-        # Register and connect the ToolManager to the MCP Aggregator Server
-        # The aggregator itself connects to the backends internally.
-        # The helper will discover tools *exposed by the aggregator*.
-        discovered_tools = await register_and_connect_mcp_server(tool_registry, config)
+    # Create MCPManager for the aggregator server
+    mcp_manager = MCPManager(mcp_configs=[config])
 
-        # Verify tools from both backends were discovered via the aggregator
-        # The aggregator now exposes tools named: backendName_toolName
-        # And ToolManager registers them as: aggregatorName_backendName_toolName
-        assert "backend_0_add" in discovered_tools
-        assert "backend_0_multiply" in discovered_tools
-        assert "backend_1_add" in discovered_tools
-        assert "backend_1_multiply" in discovered_tools
+    async with mcp_manager:
+        # Create ToolManager using the aggregator's MCPManager
+        tool_manager = ToolManager(mcp_manager=mcp_manager)
 
-        # Verify tools are registered in ToolManager with its own prefix
-        registered_tool_specs = tool_registry.get_tools_specs()
+        # Verify tools from backends are registered via the aggregator
+        registered_tool_specs = tool_manager.get_tools_specs()
         registered_tool_names = [
             spec["function"]["name"] for spec in registered_tool_specs
         ]
-        # ToolManager adds its own prefix (aggregator_server_name) to the name exposed by the aggregator
+        print(f"Registered tools (aggregator): {registered_tool_names}")
+        # ToolManager prefixes the aggregator's name to the tools exposed by the aggregator
         assert f"{aggregator_server_name}_backend_0_add" in registered_tool_names
         assert f"{aggregator_server_name}_backend_0_multiply" in registered_tool_names
         assert f"{aggregator_server_name}_backend_1_add" in registered_tool_names
         assert f"{aggregator_server_name}_backend_1_multiply" in registered_tool_names
 
-        # Initialize client with the registry containing the aggregator connection
+        # Initialize client with the ToolManager
         client = LLMClient(
-            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
+            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_manager
         )
 
-        # Perform the actual LLM interaction test using the aggregator
-        # The helper function's assertions should work as tool names still end with _add/_multiply
-        # Pass the aggregator's registered name to the helper
-        await _perform_mcp_tool_test(client, aggregator_server_name)
+        # Perform the actual LLM interaction test
+        # Expect tools from both backends to be potentially called
+        await _perform_mcp_tool_test(client, ["_add", "_multiply"])
 
-    finally:
-        # Clean up by unregistering the aggregator connection from ToolManager
-        await tool_registry.mcp_manager.unregister_server(aggregator_server_name)
+    # No explicit unregister needed
 
 
 @pytest.mark.asyncio
-async def test_mcp_sse_tools(sse_mcp_server, tool_registry):
+async def test_mcp_sse_tools(sse_mcp_server):
     """Test MCP tools functionality using SSE transport."""
     sse_url = sse_mcp_server
     server_name = "test_sse_server"
     config = SSEMCPConfig(name=server_name, url=sse_url)
 
-    try:
-        # Register and connect using the provided registry instance
-        discovered_tools = await register_and_connect_mcp_server(tool_registry, config)
+    # Create MCPManager with the config
+    mcp_manager = MCPManager(mcp_configs=[config])
 
-        # Verify that the tools were discovered
-        assert "add" in discovered_tools
-        assert "multiply" in discovered_tools
+    async with mcp_manager:
+        # Create ToolManager using the context-managed MCPManager
+        tool_manager = ToolManager(mcp_manager=mcp_manager)
 
-        # Verify tools are registered with correct IDs in the specific registry instance
-        registered_tool_specs = tool_registry.get_tools_specs()
+        # Verify tools are registered
+        registered_tool_specs = tool_manager.get_tools_specs()
         registered_tool_names = [
             spec["function"]["name"] for spec in registered_tool_specs
         ]
+        print(f"Registered tools (sse): {registered_tool_names}")
         assert f"{server_name}_add" in registered_tool_names
         assert f"{server_name}_multiply" in registered_tool_names
 
-        # Initialize client with the registry containing the MCP connection
+        # Initialize client with the ToolManager
         client = LLMClient(
-            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
+            provider_model=f"{test_provider}/{test_model}", tool_registry=tool_manager
         )
 
         # Perform the actual LLM interaction test
-        await _perform_mcp_tool_test(client, server_name)
+        await _perform_mcp_tool_test(client, ["_add", "_multiply"])
 
-    finally:
-        # Clean up by unregistering from the specific registry instance
-        await tool_registry.mcp_manager.unregister_server(server_name)
+    # No explicit unregister needed
