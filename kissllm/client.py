@@ -98,31 +98,60 @@ class LLMClient:
             # Pass the client's tool registry to the stream object
             return CompletionStream(res, self.tool_registry)
 
-    async def continue_with_tool_results(self, response, model=None):
-        """Continue the conversation with tool results"""
-        # Pass the client's tool registry to get results
-        tool_results = await response.get_tool_results()
-        if not tool_results:
-            return None
+    async def async_completion_with_tool_execution(
+        self,
+        messages: List[Dict[str, str]],
+        model: str | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        stream: Optional[bool] = False,
+        **kwargs,
+    ) -> Any:
+        """Execute LLM completion with automatic tool execution until no more tool calls"""
+        max_steps = 10  # Prevent infinite loops
+        step = 0
 
-        # Get the tool calls
-        tool_calls = response.get_tool_calls()
+        while step < max_steps:
+            step += 1
+            response = await self.async_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+                tools=True,
+                tool_choice="auto",
+                **kwargs,
+            )
 
-        # Create messages for continuation
-        messages = []
+            if stream:
+                if isinstance(response, CompletionStream):
+                    print("\nStreaming response with MCP tool calls:")
+                    async for content in response.iter_content():
+                        print(content, end="", flush=True)
+                    print("\n")
 
-        for choice in response.choices:
+                    response = await response.accumulate_stream()
+
+            if not response.get_tool_calls():
+                # No more tool calls, return the final response
+                return response
+
+            # Execute tools and get results
+            tool_results = await response.get_tool_results()
+
+            # Append assistant message with tool calls
             messages.append(
                 {
                     "role": "assistant",
-                    "content": choice.message.content or "",
-                    "tool_calls": tool_calls,
+                    "content": response.choices[0].message.content or "",
+                    "tool_calls": response.get_tool_calls(),
                 }
             )
 
-        # Add tool results
-        for result in tool_results:
-            messages.append(result)
+            # Append tool results
+            for result in tool_results:
+                messages.append(result)
 
-        # Make a new completion with the tool results
-        return await self.async_completion(messages=messages, model=model, stream=True)
+        # If we reach max steps, return the last response
+        return response

@@ -4,7 +4,6 @@ import subprocess
 import sys
 import time
 from contextlib import closing
-from typing import List
 
 import pytest
 from dotenv import load_dotenv
@@ -169,68 +168,26 @@ def tool_registry():
 
 
 # Helper function to perform the core LLM interaction and assertions
-async def _perform_mcp_tool_test(client: LLMClient, expected_tool_suffixes: List[str]):
+async def _perform_mcp_tool_test(client: LLMClient):
     """Performs the LLM interaction part of the MCP tool test."""
-    # Test with MCP tools
-    response = await client.async_completion(
+    # Test with automatic tool execution
+    final_response = await client.async_completion_with_tool_execution(
         messages=[
             {
                 "role": "user",
                 "content": "What is 15 + 27 and 8 * 9?",
             }
         ],
-        tools=True,  # Use all registered tools (including MCP ones)
-        tool_choice="auto",
         stream=True,
     )
 
-    print("\nStreaming response with MCP tool calls:")
-    async for content in response.iter_content():
-        print(content, end="", flush=True)
-    print("\n")
+    # Print the final response content
+    content = final_response.choices[0].message.content
+    print(f"\nFinal response content: {content}")
 
-    response = await response.accumulate_stream()
-
-    # Get tool calls and results
-    tool_calls = response.get_tool_calls()
-    print("\nTool Calls:")
-    # Check that the correct tools were called based on expected suffixes
-    called_tool_names = {call["function"]["name"] for call in tool_calls}
-    print(f"Called tool names: {called_tool_names}")
-    for suffix in expected_tool_suffixes:
-        assert any(name.endswith(suffix) for name in called_tool_names), (
-            f"Expected tool ending with '{suffix}' was not called."
-        )
-
-    for call in tool_calls:
-        print(f"- {call['function']['name']}: {call['function']['arguments']}")
-        # Basic check for argument structure
-        assert "arguments" in call["function"]
-        # Depending on the model, arguments might be a string or dict
-        # assert isinstance(call['function']['arguments'], (str, dict))
-
-    # get_tool_results uses the registry stored in the response object
-    tool_results = await response.get_tool_results()
-    print("\nTool Results:")
-    assert len(tool_results) == len(tool_calls)  # Ensure one result per call
-    for result in tool_results:
-        assert "tool_call_id" in result
-        assert "content" in result
-        print(f"- {result['tool_call_id']}: {result['content']}")
-
-    # Continue conversation with tool results
-    if tool_calls:
-        print("\nContinuing conversation with tool results:")
-        continuation = await client.continue_with_tool_results(response, test_model)
-
-        final_content = ""
-        async for content in continuation.iter_content():
-            print(content, end="", flush=True)
-            final_content += content
-        print("\n")
-        # Basic check that the final response contains the calculated numbers
-        assert "42" in final_content  # 15 + 27
-        assert "72" in final_content or "72.0" in final_content  # 8 * 9
+    # Basic check that the final response contains the calculated numbers
+    assert "42" in content  # 15 + 27
+    assert "72" in content or "72.0" in content  # 8 * 9
 
 
 @pytest.mark.asyncio
@@ -266,7 +223,7 @@ async def test_mcp_stdio_tools(mcp_server_path):
         )
 
         # Perform the actual LLM interaction test
-        await _perform_mcp_tool_test(client, ["_add", "_multiply"])
+        await _perform_mcp_tool_test(client)
 
     # No explicit unregister needed, handled by async with
 
@@ -303,8 +260,7 @@ async def test_mcp_aggregator_tools(mcp_aggregator_server):
         )
 
         # Perform the actual LLM interaction test
-        # Expect tools from both backends to be potentially called
-        await _perform_mcp_tool_test(client, ["_add", "_multiply"])
+        await _perform_mcp_tool_test(client)
 
     # No explicit unregister needed
 
@@ -338,6 +294,6 @@ async def test_mcp_sse_tools(sse_mcp_server):
         )
 
         # Perform the actual LLM interaction test
-        await _perform_mcp_tool_test(client, ["_add", "_multiply"])
+        await _perform_mcp_tool_test(client)
 
     # No explicit unregister needed

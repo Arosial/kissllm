@@ -61,45 +61,20 @@ async def test_tool_calls(tool_registry):
         provider_model=f"{test_provider}/{test_model}", tool_registry=tool_registry
     )
 
-    # Test with specific tools
-    response = await client.async_completion(
+    # Test with automatic tool execution
+    final_response = await client.async_completion_with_tool_execution(
         messages=[
             {
                 "role": "user",
                 "content": "What's the weather in Tokyo and what is 15 * 7?",
             }
         ],
-        tools=True,  # Use all registered tools
-        tool_choice="auto",
         stream=True,
     )
 
-    print("\nStreaming response with tool calls:")
-    async for content in response.iter_content():
-        print(content, end="", flush=True)
-    print("\n")
-
-    response = await response.accumulate_stream()
-    # Get tool calls and results
-    tool_calls = response.get_tool_calls()
-    print("\nTool Calls:")
-    for call in tool_calls:
-        print(f"- {call['function']['name']}: {call['function']['arguments']}")
-
-    # get_tool_results now uses the registry stored in the response object
-    tool_results = await response.get_tool_results()
-    print("\nTool Results:")
-    for result in tool_results:
-        print(f"- {result['tool_call_id']}: {result['content']}")
-
-    # Continue conversation with tool results
-    if tool_calls:
-        print("\nContinuing conversation with tool results:")
-        continuation = await client.continue_with_tool_results(response, test_model)
-
-        async for content in continuation.iter_content():
-            print(content, end="", flush=True)
-        print("\n")
+    # Print the final response content
+    print("\nFinal response content:")
+    print(final_response.choices[0].message.content)
 
 
 @pytest.mark.asyncio
