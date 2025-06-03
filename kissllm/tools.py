@@ -117,6 +117,16 @@ class ToolManager:
         self.local_manager = local_manager
         self.mcp_manager = mcp_manager
 
+    async def __aenter__(self):
+        """Setup tools"""
+        if self.mcp_manager:
+            return await self.mcp_manager.register_all()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Tear down tools."""
+        if self.mcp_manager:
+            await self.mcp_manager.unregister_all()
+
     def get_tools_specs(self) -> List[Dict[str, Any]]:
         """Get all registered tool specifications (local and MCP)."""
         local_specs = self.local_manager.get_tools_specs() if self.local_manager else []

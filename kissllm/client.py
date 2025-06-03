@@ -80,6 +80,8 @@ class LLMClient:
                 # If tools=True but no tools are registered, don't send empty list
                 # Some providers might error on empty tools list
                 tools = None
+        else:
+            tools = None
 
         res = await self.provider_driver.async_completion(
             messages=messages,
@@ -105,6 +107,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: Optional[bool] = False,
+        msg_update=list.append,
         **kwargs,
     ) -> Any:
         """Execute LLM completion with automatic tool execution until no more tool calls"""
@@ -126,7 +129,7 @@ class LLMClient:
 
             if stream:
                 if isinstance(response, CompletionStream):
-                    print("\nStreaming response with MCP tool calls:")
+                    print("\n======Streaming Assistant Response:======")
                     async for content in response.iter_content():
                         print(content, end="", flush=True)
                     print("\n")
@@ -134,24 +137,32 @@ class LLMClient:
                     response = await response.accumulate_stream()
 
             if not response.get_tool_calls():
-                # No more tool calls, return the final response
-                return response
+                # No more tool calls, break the loop
+                msg_update(
+                    messages,
+                    {
+                        "role": "assistant",
+                        "content": response.choices[0].message.content or "",
+                    },
+                )
+                break
+            else:
+                # Execute tools and get results
+                tool_results = await response.get_tool_results()
 
-            # Execute tools and get results
-            tool_results = await response.get_tool_results()
+                # Append assistant message with tool calls
+                msg_update(
+                    messages,
+                    {
+                        "role": "assistant",
+                        "content": response.choices[0].message.content or "",
+                        "tool_calls": response.get_tool_calls(),
+                    },
+                )
 
-            # Append assistant message with tool calls
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": response.choices[0].message.content or "",
-                    "tool_calls": response.get_tool_calls(),
-                }
-            )
-
-            # Append tool results
-            for result in tool_results:
-                messages.append(result)
+                # Append tool results
+                for result in tool_results:
+                    messages.append(result)
 
         # If we reach max steps, return the last response
         return response
