@@ -8,6 +8,13 @@ from kissllm.stream import CompletionStream
 from kissllm.tools import ToolManager, ToolMixin
 
 
+async def _stream_output(response: CompletionStream):
+    print("\n======Streaming Assistant Response:======")
+    async for content in response.iter_content():
+        print(content, end="", flush=True)
+    print("\n")
+
+
 class CompletionResponse(ToolMixin):
     def __init__(self, response: Completion, tool_registry: Optional[ToolManager]):
         self.__dict__.update(response.__dict__)
@@ -100,6 +107,7 @@ class LLMClient:
             # Pass the client's tool registry to the stream object
             return CompletionStream(res, self.tool_registry)
 
+
     async def async_completion_with_tool_execution(
         self,
         messages: List[Dict[str, str]],
@@ -108,6 +116,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         stream: Optional[bool] = False,
         msg_update=list.append,
+        stream_output=_stream_output,
         **kwargs,
     ) -> Any:
         """Execute LLM completion with automatic tool execution until no more tool calls"""
@@ -129,11 +138,7 @@ class LLMClient:
 
             if stream:
                 if isinstance(response, CompletionStream):
-                    print("\n======Streaming Assistant Response:======")
-                    async for content in response.iter_content():
-                        print(content, end="", flush=True)
-                    print("\n")
-
+                    stream_output(response)
                     response = await response.accumulate_stream()
 
             if not response.get_tool_calls():
