@@ -80,8 +80,13 @@ class CompletionStream:
         if reasoning:
             reasoning_started = False
             async for chunk in self:
+                # hardcoded reasoning_content or reasoning attribute.
                 reasoning_content = getattr(
                     chunk.choices[0].delta, "reasoning_content", None
+                )
+                if not reasoning_content:
+                    reasoning_content = getattr(
+                    chunk.choices[0].delta, "reasoning", None
                 )
                 if not reasoning_started and reasoning_content:
                     yield "<Reasoning>\n"
@@ -91,7 +96,7 @@ class CompletionStream:
 
                 content = chunk.choices[0].delta.content
                 if reasoning_started and content:
-                    yield "</Reasoning>\n"
+                    yield "</Reasoning>\n\n"
                     reasoning_started = False
                 if content:
                     yield content
