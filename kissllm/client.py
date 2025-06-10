@@ -107,7 +107,6 @@ class LLMClient:
             # Pass the client's tool registry to the stream object
             return CompletionStream(res, self.tool_registry)
 
-
     async def async_completion_with_tool_execution(
         self,
         messages: List[Dict[str, str]],
@@ -117,10 +116,10 @@ class LLMClient:
         stream: Optional[bool] = False,
         msg_update=list.append,
         stream_output=_stream_output,
+        max_steps=10,
         **kwargs,
-    ) -> Any:
+    ):
         """Execute LLM completion with automatic tool execution until no more tool calls"""
-        max_steps = 10  # Prevent infinite loops
         step = 0
 
         while step < max_steps:
@@ -138,11 +137,10 @@ class LLMClient:
 
             if stream:
                 if isinstance(response, CompletionStream):
-                    stream_output(response)
+                    await stream_output(response)
                     response = await response.accumulate_stream()
 
             if not response.get_tool_calls():
-                # No more tool calls, break the loop
                 msg_update(
                     messages,
                     {
@@ -152,10 +150,8 @@ class LLMClient:
                 )
                 break
             else:
-                # Execute tools and get results
                 tool_results = await response.get_tool_results()
 
-                # Append assistant message with tool calls
                 msg_update(
                     messages,
                     {
@@ -165,9 +161,5 @@ class LLMClient:
                     },
                 )
 
-                # Append tool results
                 for result in tool_results:
-                    messages.append(result)
-
-        # If we reach max steps, return the last response
-        return response
+                    msg_update(messages, result)

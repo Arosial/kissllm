@@ -62,19 +62,20 @@ async def test_tool_calls(tool_registry):
     )
 
     # Test with automatic tool execution
-    final_response = await client.async_completion_with_tool_execution(
-        messages=[
-            {
-                "role": "user",
-                "content": "What's the weather in Tokyo and what is 15 * 7?",
-            }
-        ],
+    messages = [
+        {
+            "role": "user",
+            "content": "What's the weather in Tokyo and what is 15 * 7?",
+        }
+    ]
+    await client.async_completion_with_tool_execution(
+        messages=messages,
         stream=True,
     )
 
     # Print the final response content
-    print("\nFinal response content:")
-    print(final_response.choices[0].message.content)
+    print("\nAnswer: ")
+    print(messages[-1]["content"])
 
 
 @pytest.mark.asyncio
@@ -111,7 +112,7 @@ async def test_single_tool_call(tool_registry):
     print("\nForced tool call response:")
     print(response.choices[0].message.content)
 
-    if hasattr(response.choices[0].message, "tool_calls"):
+    if getattr(response.choices[0].message, "tool_calls", None):
         tool_calls = response.choices[0].message.tool_calls
         print("\nTool Calls:")
         for call in tool_calls:

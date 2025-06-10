@@ -86,8 +86,8 @@ class CompletionStream:
                 )
                 if not reasoning_content:
                     reasoning_content = getattr(
-                    chunk.choices[0].delta, "reasoning", None
-                )
+                        chunk.choices[0].delta, "reasoning", None
+                    )
                 if not reasoning_started and reasoning_content:
                     yield "<Reasoning>\n"
                     reasoning_started = True

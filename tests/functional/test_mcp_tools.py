@@ -171,23 +171,24 @@ def tool_registry():
 async def _perform_mcp_tool_test(client: LLMClient):
     """Performs the LLM interaction part of the MCP tool test."""
     # Test with automatic tool execution
-    final_response = await client.async_completion_with_tool_execution(
-        messages=[
-            {
-                "role": "user",
-                "content": "What is 15 + 27 and 8 * 9?",
-            }
-        ],
+    messages = [
+        {
+            "role": "user",
+            "content": "What is 15 + 27 and 8 * 9?",
+        }
+    ]
+    await client.async_completion_with_tool_execution(
+        messages=messages,
         stream=True,
     )
 
     # Print the final response content
-    content = final_response.choices[0].message.content
-    print(f"\nFinal response content: {content}")
+    content = messages[-1]["content"]
+    print(f"\nAnswer: {content}")
 
     # Basic check that the final response contains the calculated numbers
     assert "42" in content  # 15 + 27
-    assert "72" in content or "72.0" in content  # 8 * 9
+    assert "72" in content  # 8 * 9
 
 
 @pytest.mark.asyncio
