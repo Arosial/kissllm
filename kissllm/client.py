@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, List, Optional, Union
 
 from openai.types.completion import Completion
@@ -6,6 +7,9 @@ from kissllm.observation.decorators import observe
 from kissllm.providers import get_provider_driver
 from kissllm.stream import CompletionStream
 from kissllm.tools import ToolManager, ToolMixin
+from kissllm.utils import logging_prompt
+
+logger = logging.getLogger(__name__)
 
 
 async def _stream_output(response: CompletionStream):
@@ -121,6 +125,7 @@ class LLMClient:
         else:
             tools = None
 
+        logging_prompt(logger, "===Raw Prompt Messages:===", messages)
         res = await self.provider_driver.async_completion(
             messages=messages,
             model=model,

@@ -9,6 +9,7 @@ dependencies = [
     "openai>=1.63.0",
     "mcp>=0.1.0",
     "asyncio",
+    "pyyaml>=6.0.2",
 ]
 
 [dependency-groups]
