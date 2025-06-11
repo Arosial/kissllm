@@ -11,8 +11,39 @@ from kissllm.tools import ToolManager, ToolMixin
 async def _stream_output(response: CompletionStream):
     print("\n======Streaming Assistant Response:======")
     async for content in response.iter_content():
-        print(content, end="", flush=True)
+        print(content.replace(r"\n", "\n"), end="", flush=True)
     print("\n")
+
+
+async def default_handle_response(response, messages):
+    if isinstance(response, CompletionStream):
+        await _stream_output(response)
+        response = await response.accumulate_stream()
+    msg_update = list.append
+    if not response.get_tool_calls():
+        msg_update(
+            messages,
+            {
+                "role": "assistant",
+                "content": response.choices[0].message.content or "",
+            },
+        )
+        return messages, False
+    else:
+        tool_results = await response.get_tool_results()
+
+        msg_update(
+            messages,
+            {
+                "role": "assistant",
+                "content": response.choices[0].message.content or "",
+                "tool_calls": response.get_tool_calls(),
+            },
+        )
+
+        for result in tool_results:
+            msg_update(messages, result)
+        return messages, True
 
 
 class CompletionResponse(ToolMixin):
@@ -114,8 +145,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: Optional[bool] = False,
-        msg_update=list.append,
-        stream_output=_stream_output,
+        handle_response=default_handle_response,
         max_steps=10,
         **kwargs,
     ):
@@ -135,31 +165,6 @@ class LLMClient:
                 **kwargs,
             )
 
-            if stream:
-                if isinstance(response, CompletionStream):
-                    await stream_output(response)
-                    response = await response.accumulate_stream()
-
-            if not response.get_tool_calls():
-                msg_update(
-                    messages,
-                    {
-                        "role": "assistant",
-                        "content": response.choices[0].message.content or "",
-                    },
-                )
+            messages, have_tool_call = await handle_response(response, messages)
+            if not have_tool_call:
                 break
-            else:
-                tool_results = await response.get_tool_results()
-
-                msg_update(
-                    messages,
-                    {
-                        "role": "assistant",
-                        "content": response.choices[0].message.content or "",
-                        "tool_calls": response.get_tool_calls(),
-                    },
-                )
-
-                for result in tool_results:
-                    msg_update(messages, result)
