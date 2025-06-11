@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from functools import wraps
@@ -90,13 +91,16 @@ class LocalToolManager:
         """Check if a tool name corresponds to a registered local tool."""
         return name in self._tools
 
-    def execute_tool(self, name: str, args: Dict[str, Any]) -> Any:
+    async def execute_tool(self, name: str, args: Dict[str, Any]) -> Any:
         """Execute a registered local tool function."""
         func = self._get_tool_function(name)
         if not func:
             raise ValueError(f"Local tool function '{name}' not found")
         logger.debug(f"Executing local tool: {name} with args: {args}")
-        return func(**args)
+        if asyncio.iscoroutinefunction(func):
+            return await func(**args)
+        else:
+            return func(**args)
 
 
 class ToolManager:
@@ -157,7 +161,7 @@ class ToolManager:
 
         # Check local tools first
         if self.local_manager and self.local_manager.is_local_tool(function_name):
-            return self.local_manager.execute_tool(function_name, args)
+            return await self.local_manager.execute_tool(function_name, args)
 
         # Check MCP tools
         if self.mcp_manager and self.mcp_manager.is_mcp_tool(function_name):
