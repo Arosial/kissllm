@@ -12,42 +12,40 @@ from kissllm.utils import logging_prompt
 logger = logging.getLogger(__name__)
 
 
-async def _stream_output(response: CompletionStream):
-    print("\n======Streaming Assistant Response:======")
-    async for content in response.iter_content():
-        print(content.replace(r"\n", "\n"), end="", flush=True)
-    print("\n")
+class DefaultResponseHandler:
+    def __init__(self, messages):
+        self.messages = messages
 
+    async def accumulate_response(self, response):
+        if isinstance(response, CompletionStream):
+            response = await response.accumulate_stream()
+        return response
 
-async def default_handle_response(response, messages):
-    if isinstance(response, CompletionStream):
-        await _stream_output(response)
-        response = await response.accumulate_stream()
-    msg_update = list.append
-    if not response.get_tool_calls():
-        msg_update(
-            messages,
-            {
-                "role": "assistant",
-                "content": response.choices[0].message.content or "",
-            },
-        )
-        return messages, False
-    else:
-        tool_results = await response.get_tool_results()
+    async def __call__(self, response):
+        messages = self.messages
+        response = await self.accumulate_response(response)
+        if not response.get_tool_calls():
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": response.choices[0].message.content or "",
+                }
+            )
+            return messages, False
+        else:
+            tool_results = await response.get_tool_results()
 
-        msg_update(
-            messages,
-            {
-                "role": "assistant",
-                "content": response.choices[0].message.content or "",
-                "tool_calls": response.get_tool_calls(),
-            },
-        )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": response.choices[0].message.content or "",
+                    "tool_calls": response.get_tool_calls(),
+                }
+            )
 
-        for result in tool_results:
-            msg_update(messages, result)
-        return messages, True
+            for result in tool_results:
+                messages.append(result)
+            return messages, True
 
 
 class CompletionResponse(ToolMixin):
@@ -150,12 +148,14 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: Optional[bool] = False,
-        handle_response=default_handle_response,
+        handle_response=None,
         max_steps=10,
         **kwargs,
     ):
         """Execute LLM completion with automatic tool execution until no more tool calls"""
         step = 0
+        if handle_response is None:
+            handle_response = DefaultResponseHandler(messages)
 
         while step < max_steps:
             step += 1
@@ -169,7 +169,6 @@ class LLMClient:
                 tool_choice="auto",
                 **kwargs,
             )
-
-            messages, have_tool_call = await handle_response(response, messages)
-            if not have_tool_call:
+            messages, continu = await handle_response(response)
+            if not continu:
                 break
