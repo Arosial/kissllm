@@ -43,9 +43,6 @@ def literal_presenter(dumper, data):
 PrettyDumper.add_representer(str, literal_presenter)
 
 
-_PROMPT_LOG_LEVEL = None
-
-
 def logging_prompt(logger: logging.Logger, *messages):
     """Log messages with a custom log level for prompts.
 
@@ -56,9 +53,9 @@ def logging_prompt(logger: logging.Logger, *messages):
         logger: The logger instance to use.
         *messages: Messages to log, formatted as YAML for readability.
     """
-    global _PROMPT_LOG_LEVEL
-    if _PROMPT_LOG_LEVEL is None:
-        _PROMPT_LOG_LEVEL = logging.getLevelNamesMapping().get(
+
+    if not hasattr(logging_prompt, "_PROMPT_LOG_LEVEL"):
+        logging_prompt._PROMPT_LOG_LEVEL = logging.getLevelNamesMapping().get(
             (get_from_env("PROMPT_LOG_LEVEL") or "").upper(), 100
         )
 
@@ -78,7 +75,7 @@ def logging_prompt(logger: logging.Logger, *messages):
 
     for message in messages:
         logger.log(
-            _PROMPT_LOG_LEVEL,
+            logging_prompt._PROMPT_LOG_LEVEL,
             yaml.dump(
                 recursive_convert(message),
                 allow_unicode=True,
