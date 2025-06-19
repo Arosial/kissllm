@@ -15,55 +15,19 @@ class LocalToolManager:
     def __init__(self):
         self._tools: Dict[str, Dict[str, Any]] = {}
 
-    def register(self, func=None, *, name=None, description=None):
+    def register(self, func=None, *, name="", description=""):
         """Decorator to register a function as a tool"""
 
         def decorator(func):
-            func_name = name or func.__name__
-            func_description = description or func.__doc__ or ""
-
-            # Extract parameter information from type hints and docstring
-            type_hints = get_type_hints(func)
-            parameters = {"type": "object", "properties": {}, "required": []}
-
-            # Process function signature to get parameters
-            import inspect
-
-            sig = inspect.signature(func)
-            for param_name, param in sig.parameters.items():
-                if param_name == "self":
-                    continue
-
-                param_type = type_hints.get(param_name, Any)
-                param_info = {"type": "string"}  # Default to string
-
-                # Map Python types to JSON Schema types
-                if param_type is int:
-                    param_info = {"type": "integer"}
-                elif param_type is float:
-                    param_info = {"type": "number"}
-                elif param_type is bool:
-                    param_info = {"type": "boolean"}
-                elif param_type is list or param_type is List:
-                    param_info = {"type": "array", "items": {"type": "string"}}
-
-                parameters["properties"][param_name] = param_info
-
-                # Add to required parameters if no default value
-                if param.default == inspect.Parameter.empty:
-                    parameters["required"].append(param_name)
+            func_spec = self.generate_function_spec(func, name, description)
+            func_name = func_spec["name"]
 
             # Register the tool
             self._tools[func_name] = {
                 "function": func,
                 "spec": {
                     "type": "function",
-                    "function": {
-                        "name": func_name,
-                        "description": func_description,
-                        "parameters": parameters,
-                    },
-                },
+                    "function": func_spec}
             }
             logger.debug(f"Registered local tool: {func_name}")
 
@@ -81,6 +45,59 @@ class LocalToolManager:
     def get_tools_specs(self) -> List[Dict[str, Any]]:
         """Get all registered local tool specifications."""
         return [tool["spec"] for tool in self._tools.values()]
+
+    @classmethod
+    def generate_function_spec(
+        cls, func: Callable, name: str = "", description: str = ""
+    ) -> Dict[str, Any]:
+        """Generate a function specification from a callable.
+
+        Args:
+            func: The function to generate a spec for.
+            name: The name of the function.
+            description: Description of the function.
+
+        Returns:
+            Dict[str, Any]: The generated function specification.
+        """
+        name = name or func.__name__
+        description = description or func.__doc__ or ""
+        # Extract parameter information from type hints and docstring
+        type_hints = get_type_hints(func)
+        parameters = {"type": "object", "properties": {}, "required": []}
+
+        # Process function signature to get parameters
+        import inspect
+
+        sig = inspect.signature(func)
+        for param_name, param in sig.parameters.items():
+            if param_name == "self":
+                continue
+
+            param_type = type_hints.get(param_name, Any)
+            param_info = {"type": "string"}  # Default to string
+
+            # Map Python types to JSON Schema types
+            if param_type is int:
+                param_info = {"type": "integer"}
+            elif param_type is float:
+                param_info = {"type": "number"}
+            elif param_type is bool:
+                param_info = {"type": "boolean"}
+            elif param_type is list or param_type is List:
+                param_info = {"type": "array", "items": {"type": "string"}}
+
+            parameters["properties"][param_name] = param_info
+
+            # Add to required parameters if no default value
+            if param.default == inspect.Parameter.empty:
+                parameters["required"].append(param_name)
+
+        return {
+                "name": name,
+                "description": description,
+                "parameters": parameters,
+        }
 
     def _get_tool_function(self, name: str) -> Optional[Callable]:
         """Get a registered local tool function by name"""
