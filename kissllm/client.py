@@ -116,12 +116,10 @@ class LLMClient:
         # Use registered tools from the client's registry if tools parameter is True
         if tools is True and self.tool_registry:
             tools = self.tool_registry.get_tools_specs()
-            if not tools:
-                # If tools=True but no tools are registered, don't send empty list
-                # Some providers might error on empty tools list
-                tools = None
-        else:
+
+        if not tools:
             tools = None
+            tool_choice = None
 
         logging_prompt(logger, "===Raw Prompt Messages:===", messages)
         res = await self.provider_driver.async_completion(
