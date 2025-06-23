@@ -1,8 +1,18 @@
 import asyncio
+import inspect
 import json
 import logging
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, get_type_hints
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from kissllm.mcp.manager import MCPManager
 
@@ -20,14 +30,13 @@ class LocalToolManager:
 
         def decorator(func):
             func_spec = self.generate_function_spec(func, name, description)
+            logger.debug(f"Generated function spec: {func_spec}")
             func_name = func_spec["name"]
 
             # Register the tool
             self._tools[func_name] = {
                 "function": func,
-                "spec": {
-                    "type": "function",
-                    "function": func_spec}
+                "spec": {"type": "function", "function": func_spec},
             }
             logger.debug(f"Registered local tool: {func_name}")
 
@@ -60,44 +69,50 @@ class LocalToolManager:
         Returns:
             Dict[str, Any]: The generated function specification.
         """
+
+        def conv_type(py_type):
+            """Map Python types to JSON Schema types."""
+            if py_type is int:
+                json_type = {"type": "integer"}
+            elif py_type is float:
+                json_type = {"type": "number"}
+            elif py_type is bool:
+                json_type = {"type": "boolean"}
+            elif (origin := get_origin(py_type)) is not None and (
+                origin is list or origin is List
+            ):
+                args = get_args(py_type)
+                item_type = conv_type(args[0])
+                json_type = {"type": "array", "items": item_type}
+            else:
+                json_type = {"type": "string"}
+            return json_type
+
         name = name or func.__name__
-        description = description or func.__doc__ or ""
+        description = description or inspect.getdoc(func) or ""
         # Extract parameter information from type hints and docstring
         type_hints = get_type_hints(func)
         parameters = {"type": "object", "properties": {}, "required": []}
-
-        # Process function signature to get parameters
-        import inspect
 
         sig = inspect.signature(func)
         for param_name, param in sig.parameters.items():
             if param_name == "self":
                 continue
 
-            param_type = type_hints.get(param_name, Any)
-            param_info = {"type": "string"}  # Default to string
-
-            # Map Python types to JSON Schema types
-            if param_type is int:
-                param_info = {"type": "integer"}
-            elif param_type is float:
-                param_info = {"type": "number"}
-            elif param_type is bool:
-                param_info = {"type": "boolean"}
-            elif param_type is list or param_type is List:
-                param_info = {"type": "array", "items": {"type": "string"}}
-
+            py_type = type_hints.get(param_name, Any)
+            param_info = conv_type(py_type)
             parameters["properties"][param_name] = param_info
 
             # Add to required parameters if no default value
             if param.default == inspect.Parameter.empty:
                 parameters["required"].append(param_name)
 
-        return {
-                "name": name,
-                "description": description,
-                "parameters": parameters,
+        spec = {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
         }
+        return spec
 
     def _get_tool_function(self, name: str) -> Optional[Callable]:
         """Get a registered local tool function by name"""
