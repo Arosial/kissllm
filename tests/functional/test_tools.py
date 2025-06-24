@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 from kissllm.client import LLMClient
 from kissllm.tools import LocalToolManager, ToolManager
+from tests.functional.helpers import ResponseHandlerForTest
 
 load_dotenv()
 test_provider = os.environ["TEST_PROVIDER"]
@@ -71,6 +72,7 @@ async def test_tool_calls(tool_registry):
     await client.async_completion_with_tool_execution(
         messages=messages,
         stream=True,
+        handle_response=ResponseHandlerForTest(messages),
     )
 
     # Print the final response content
@@ -106,6 +108,7 @@ async def test_single_tool_call(tool_registry):
             }
         ],
         tool_choice={"type": "function", "function": {"name": "calculate"}},
+        use_flexible_toolcall=False,
         stream=False,
     )
 

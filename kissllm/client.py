@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, Dict, List, Optional, Union
 
@@ -49,9 +50,14 @@ class DefaultResponseHandler:
 
 
 class CompletionResponse(ToolMixin):
-    def __init__(self, response: Completion, tool_registry: Optional[ToolManager]):
+    def __init__(
+        self,
+        response: Completion,
+        tool_registry: Optional[ToolManager],
+        use_flexible_toolcall=True,
+    ):
         self.__dict__.update(response.__dict__)
-        ToolMixin.__init__(self, tool_registry)
+        ToolMixin.__init__(self, tool_registry, use_flexible_toolcall)
 
 
 class LLMClient:
@@ -98,6 +104,45 @@ class LLMClient:
             )
         return model
 
+    def _inject_tools_into_messages(
+        self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]] | None
+    ) -> List[Dict[str, str]]:
+        """Inject tools information into messages using <TOOLS> tags before the latest user message"""
+        if not tools:
+            return messages
+
+        # Convert tools to a readable format
+        tools_text_pre = "<TOOLS>\n ## Specs:\n"
+        tools_text_tools = "\n".join([json.dumps(t) for t in tools])
+        tools_text_call = (
+            "\n\n## Usage: \nTo call a tool, use json inside <TOOL_CALL> tag, and generate an id to identify each tool call.  For example:\n"
+            '<TOOL_CALL>{"id": "tool_call_00001", "name": "demo_func_name", "arguments": {"demo_arg": "demo_value"}}</TOOL_CALL>\n'
+        )
+        tools_text_post = "\n</TOOLS>\n"
+
+        tools_text = (
+            tools_text_pre + tools_text_tools + tools_text_call + tools_text_post
+        )
+
+        # Find the index of the last user message
+        last_user_msg_idx = None
+        for i in reversed(range(len(messages))):
+            if messages[i]["role"] == "user":
+                last_user_msg_idx = i
+                break
+
+        new_messages = messages.copy()
+        if last_user_msg_idx is not None:
+            # Insert tools text before the last user message
+            new_messages.insert(
+                last_user_msg_idx, {"role": "user", "content": tools_text}
+            )
+        else:
+            # If no user message found, append tools text
+            new_messages.append({"role": "user", "content": tools_text})
+
+        return new_messages
+
     @observe
     async def async_completion(
         self,
@@ -108,6 +153,7 @@ class LLMClient:
         stream: Optional[bool] = False,
         tools: Optional[List[Dict[str, Any]]] | bool = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        use_flexible_toolcall: bool = True,
         **kwargs,
     ) -> Any:
         """Execute LLM completion with provider-specific implementation"""
@@ -121,9 +167,18 @@ class LLMClient:
             tools = None
             tool_choice = None
 
-        logging_prompt(logger, "===Raw Prompt Messages:===", messages)
+        # Handle simulated tools mode
+        if use_flexible_toolcall:
+            # Inject tools into messages instead of using native tool calling
+            final_messages = self._inject_tools_into_messages(messages, tools)
+            tools = None
+            tool_choice = None
+        else:
+            final_messages = messages
+
+        logging_prompt(logger, "===Raw Prompt Messages:===", final_messages)
         res = await self.provider_driver.async_completion(
-            messages=messages,
+            messages=final_messages,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -134,10 +189,14 @@ class LLMClient:
         )
         if not stream:
             # Pass the client's tool registry to the response object
-            return CompletionResponse(res, self.tool_registry)
+            return CompletionResponse(
+                res, self.tool_registry, use_flexible_toolcall=use_flexible_toolcall
+            )
         else:
             # Pass the client's tool registry to the stream object
-            return CompletionStream(res, self.tool_registry)
+            return CompletionStream(
+                res, self.tool_registry, use_flexible_toolcall=use_flexible_toolcall
+            )
 
     async def async_completion_with_tool_execution(
         self,
@@ -148,6 +207,7 @@ class LLMClient:
         stream: Optional[bool] = False,
         handle_response=None,
         max_steps=10,
+        use_flexible_toolcall: Optional[bool] = True,
         **kwargs,
     ):
         """Execute LLM completion with automatic tool execution until no more tool calls"""
@@ -164,7 +224,8 @@ class LLMClient:
                 max_tokens=max_tokens,
                 stream=stream,
                 tools=True,
-                tool_choice="auto",
+                tool_choice="auto" if not use_flexible_toolcall else None,
+                use_flexible_toolcall=use_flexible_toolcall,
                 **kwargs,
             )
             messages, continu = await handle_response(response)

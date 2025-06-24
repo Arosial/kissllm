@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 from functools import wraps
 from typing import (
     Any,
@@ -211,30 +212,70 @@ class ToolManager:
 class ToolMixin:
     """Mixin class for tool-related functionality in responses"""
 
-    def __init__(self, tool_registry) -> None:
+    def __init__(self, tool_registry, use_flexible_toolcall=True) -> None:
         self.tool_registry = tool_registry
+        self.use_flexible_toolcall = use_flexible_toolcall
+        self.tool_calls = None
 
     def get_tool_calls(self) -> List[Dict[str, Any]]:
         """Get all tool calls from the response"""
-        if hasattr(self, "tool_calls") and self.tool_calls:
+        if self.tool_calls is not None:
             return self.tool_calls
 
-        # For non-streaming responses
-        if hasattr(self, "choices") and self.choices:
-            for choice in self.choices:
-                if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
-                    return [
-                        {
-                            "id": tc.id,
-                            "type": tc.type,
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in choice.message.tool_calls
-                    ]
-        return []
+        self.tool_calls = []
+        if self.use_flexible_toolcall:
+            self.tool_calls = self._parse_flexible_tool_calls()
+        else:
+            if hasattr(self, "choices") and self.choices:
+                for choice in self.choices:
+                    if (
+                        hasattr(choice.message, "tool_calls")
+                        and choice.message.tool_calls
+                    ):
+                        self.tool_calls = [
+                            {
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in choice.message.tool_calls
+                        ]
+        return self.tool_calls
+
+    def _parse_flexible_tool_calls(self) -> List[Dict[str, Any]]:
+        """Parse simulated tool calls from message content"""
+        if not hasattr(self, "choices") or not self.choices:
+            return []
+
+        content = self.choices[0].message.content or ""
+        tool_calls = []
+
+        # Parse tool calls from content using <TOOL_CALL> tags
+        pattern = r"^\s*<TOOL_CALL>\s*(\{.*?\})\s*</TOOL_CALL>\s*$"
+        matches = re.findall(pattern, content, re.DOTALL | re.MULTILINE)
+
+        for i, match in enumerate(matches):
+            try:
+                tool_call_data = json.loads(match.strip())
+                tool_calls.append(
+                    {
+                        "id": tool_call_data.get("id"),
+                        "type": "function",
+                        "function": {
+                            "name": tool_call_data.get("name"),
+                            "arguments": json.dumps(
+                                tool_call_data.get("arguments", {})
+                            ),
+                        },
+                    }
+                )
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse simulated tool call JSON: {match}")
+
+        return tool_calls
 
     async def get_tool_results(self) -> List[Dict[str, Any]]:
         """Get results from executed tool calls using the provided ToolRegistry."""

@@ -8,23 +8,26 @@ from kissllm.tools import ToolManager, ToolMixin
 
 class AccumulatedCompletionResponse(ToolMixin):
     def __init__(
-        self, response: ParsedChatCompletion, tool_registry: Optional[ToolManager]
+        self,
+        response: ParsedChatCompletion,
+        tool_registry: Optional[ToolManager],
+        use_flexible_toolcall=True,
     ):
         self.__dict__.update(response.__dict__)
-        ToolMixin.__init__(self, tool_registry)
+        ToolMixin.__init__(self, tool_registry, use_flexible_toolcall)
 
 
 class CompletionStream:
-    def __init__(self, chunks, tool_registry: Optional[ToolManager]):
+    def __init__(
+        self, chunks, tool_registry: Optional[ToolManager], use_flexible_toolcall=True
+    ):
         self.chunks = chunks
         self._tool_registry = tool_registry
         self._consumed = False
         self.callbacks = []
-        self.tool_calls = []
-        self.current_tool_call = None
-        self.tool_results = []
         self._state = ChatCompletionStreamState()
         self._role_defined = False
+        self.use_flexible_toolcall = use_flexible_toolcall
 
     def __aiter__(self):
         return self
@@ -38,34 +41,6 @@ class CompletionStream:
                 chunk.choices[0].delta.role = None
             elif chunk.choices[0].delta.role:
                 self._role_defined = True
-
-            # Track tool calls
-            delta = chunk.choices[0].delta
-            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                for tool_call_delta in delta.tool_calls:
-                    index = tool_call_delta.index
-
-                    if len(self.tool_calls) <= index:
-                        self.tool_calls.append(
-                            {
-                                "id": "",
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        )
-
-                    if tool_call_delta.id:
-                        self.tool_calls[index]["id"] = tool_call_delta.id
-
-                    if tool_call_delta.function:
-                        if tool_call_delta.function.name:
-                            self.tool_calls[index]["function"]["name"] = (
-                                tool_call_delta.function.name
-                            )
-                        if tool_call_delta.function.arguments:
-                            self.tool_calls[index]["function"]["arguments"] += (
-                                tool_call_delta.function.arguments
-                            )
 
             self._state.handle_chunk(chunk)
             return chunk
@@ -127,7 +102,9 @@ class CompletionStream:
                 pass
         parsed = self._state.get_final_completion()
         # Pass the registry to the accumulated response
-        acc_response = AccumulatedCompletionResponse(parsed, self._tool_registry)
-        # Copy potentially populated tool calls from stream processing
-        acc_response.tool_calls = self.tool_calls
+        acc_response = AccumulatedCompletionResponse(
+            parsed,
+            self._tool_registry,
+            use_flexible_toolcall=self.use_flexible_toolcall,
+        )
         return acc_response
