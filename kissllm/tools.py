@@ -253,8 +253,8 @@ class ToolMixin:
         content = self.choices[0].message.content or ""
         tool_calls = []
 
-        # Parse tool calls from content using <TOOL_CALL> tags
-        pattern = r"^\s*<TOOL_CALL>\s*(\{.*?\})\s*</TOOL_CALL>\s*$"
+        # Parse tool calls from content using <tool_call> tags
+        pattern = r"^\s*<tool_call>\s*(\{.*?\})\s*</tool_call>\s*$"
         matches = re.findall(pattern, content, re.DOTALL | re.MULTILINE)
 
         for i, match in enumerate(matches):

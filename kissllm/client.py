@@ -107,39 +107,54 @@ class LLMClient:
     def _inject_tools_into_messages(
         self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]] | None
     ) -> List[Dict[str, str]]:
-        """Inject tools information into messages using <TOOLS> tags before the latest user message"""
+        """Inject tools information into messages."""
         if not tools:
             return messages
 
-        # Convert tools to a readable format
-        tools_text_pre = "<TOOLS>\n ## Specs:\n"
-        tools_text_tools = "\n".join([json.dumps(t) for t in tools])
-        tools_text_call = (
-            "\n\n## Usage: \nTo call a tool, use json inside <TOOL_CALL> tag, and generate an id to identify each tool call.  For example:\n"
-            '<TOOL_CALL>{"id": "tool_call_00001", "name": "demo_func_name", "arguments": {"demo_arg": "demo_value"}}</TOOL_CALL>\n'
-        )
-        tools_text_post = "\n</TOOLS>\n"
+        tools_sys = (
+            "\n# Tool Use\n"
+            "You can call external tools to help complete tasks.\n"
 
-        tools_text = (
-            tools_text_pre + tools_text_tools + tools_text_call + tools_text_post
+            "\n## Important Notes:\n"
+            "- You can only get tool results in the NEXT message, NOT immediately\n"
+            "- NEVER generate or simulate tool results yourself\n"
+
+            "\n## Tool Calling Flow:\n"
+            "1. You output <tool_call> requests in your reply.\n"
+            "2. The system executes the tool and returns the result in the NEXT message.\n"
+            "3. You process the tool results in the next round.\n"
+
+            "\n## Tool Calling Format:\n"
+            "To call a tool:\n"
+            "1. Use JSON inside <tool_call> tags\n"
+            "2. Generate a unique ID for each call\n"
+            "3. Follow the exact schema and provide all required parameters\n"
+            "4. Each <tool_call> must start on a new line\n\n"
+            "Example:\n\n"
+            '<tool_call>{"id": "tool_call_00001", "name": "demo_func_name", "arguments": {"demo_arg": "demo_value"}}</tool_call>\n'
+
+            "\n## Tool Calling Rules:\n"
+            "1. Understand the user's request before calling any tools\n"
+            "2. If no tool is needed, respond naturally\n"
+            "3. You may make multiple tool calls if necessary\n"
         )
 
-        # Find the index of the last user message
-        last_user_msg_idx = None
-        for i in reversed(range(len(messages))):
-            if messages[i]["role"] == "user":
-                last_user_msg_idx = i
-                break
+        tools_user = "\n## Available Tool Specifications:\n" + "\n".join(
+            [json.dumps(t) for t in tools]
+        )
 
         new_messages = messages.copy()
-        if last_user_msg_idx is not None:
-            # Insert tools text before the last user message
-            new_messages.insert(
-                last_user_msg_idx, {"role": "user", "content": tools_text}
-            )
+        for i, msg in enumerate(new_messages):
+            if msg["role"] == "system":
+                new_sys = msg.copy()
+                new_sys["content"] = new_sys["content"] + "\n\n" + tools_sys
+                new_messages[i] = new_sys
+                break
         else:
             # If no user message found, append tools text
-            new_messages.append({"role": "user", "content": tools_text})
+            new_messages.append({"role": "system", "content": tools_sys})
+
+        new_messages.append({"role": "user", "content": tools_user})
 
         return new_messages
 
